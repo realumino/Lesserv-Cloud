@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from route_groups import is_allowed_path
-from routers import admin_nodes, admin_reality, admin_users, health
+from routers import admin_link_profiles, admin_nodes, admin_reality, admin_users, health
 
 
 async def route_group_guard(request, call_next):
@@ -49,6 +49,7 @@ def create_app() -> FastAPI:
     app.middleware("http")(route_group_guard)
     app.include_router(health.router)
     app.include_router(admin_nodes.router)
+    app.include_router(admin_link_profiles.router)
     app.include_router(admin_users.router)
     app.include_router(admin_reality.router)
     return app

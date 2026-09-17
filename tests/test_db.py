@@ -180,6 +180,45 @@ class TestDataLayer(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(keys["reality"]["private_key"], "new")
         self.assertEqual(keys["reality"]["created_at"], 2)
 
+    async def _make_profile(self, label="CDN", overrides=None):
+        await db.create_link_profile(self.conn, {
+            "node_id": "tokyo01",
+            "id": "cdn",
+            "inbound_tag": "xhttp",
+            "label": label,
+            "overrides": overrides or {"address": "cdn.example.com", "port": 443},
+            "created_at": 1,
+        })
+
+    async def test_link_profile_stores_json_overrides(self):
+        await self._make_profile()
+
+        profile = await db.get_link_profile(self.conn, "tokyo01", "cdn")
+
+        self.assertEqual(profile["label"], "CDN")
+        self.assertEqual(
+            profile["overrides"], {"address": "cdn.example.com", "port": 443}
+        )
+        self.assertEqual(
+            [row["id"] for row in await db.list_link_profiles(self.conn, "tokyo01")],
+            ["cdn"],
+        )
+
+    async def test_link_profile_updates_and_deletes(self):
+        await self._make_profile()
+        await db.update_link_profile(self.conn, {
+            "node_id": "tokyo01",
+            "id": "cdn",
+            "inbound_tag": "xhttp",
+            "label": "CDN Edge",
+            "overrides": {"address": "edge.example.com"},
+        })
+
+        updated = await db.get_link_profile(self.conn, "tokyo01", "cdn")
+        self.assertEqual(updated["label"], "CDN Edge")
+        await db.delete_link_profile(self.conn, "tokyo01", "cdn")
+        self.assertIsNone(await db.get_link_profile(self.conn, "tokyo01", "cdn"))
+
 
 if __name__ == "__main__":
     unittest.main()

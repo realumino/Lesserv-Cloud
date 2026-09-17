@@ -109,18 +109,24 @@ class TestDesiredConfig(unittest.IsolatedAsyncioTestCase):
         await self._seed_user()
 
         runtime, warnings = await render_service.desired_config(self.conn, "tokyo01")
+        node = await db.get_node(self.conn, "tokyo01")
 
         self.assertEqual(warnings, [])
         self.assertEqual(
+            runtime["inbounds"][0]["tag"], "reality-tokyo01"
+        )
+        self.assertEqual(
             runtime["inbounds"][0]["settings"]["clients"],
-            [{"id": "u1", "email": "alice@niigata"}],
+            [{"id": "u1", "email": "alice@tokyo01-niigata"}],
         )
         self.assertEqual(
             runtime["routing"]["rules"],
-            [{"user": ["regexp:.*@niigata$"], "outboundTag": "niigata"}],
+            [{"user": ["regexp:.*@tokyo01-niigata$"], "outboundTag": "tokyo01-niigata"}],
         )
         injected = runtime["inbounds"][0]["streamSettings"]["realitySettings"]
         self.assertNotEqual(injected["privateKey"], "operator-key")
+        # Qualification is output-only: storage retains the local config.
+        self.assertEqual(node["config_json"], _config())
 
     async def test_renders_per_node_independently(self):
         """Same tags on two nodes produce two different rendered configs."""
@@ -134,11 +140,11 @@ class TestDesiredConfig(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             tokyo["routing"]["rules"],
-            [{"user": ["regexp:.*@niigata$"], "outboundTag": "niigata"}],
+            [{"user": ["regexp:.*@tokyo01-niigata$"], "outboundTag": "tokyo01-niigata"}],
         )
         self.assertEqual(
             toyama["routing"]["rules"],
-            [{"user": ["regexp:.*@other$"], "outboundTag": "other"}],
+            [{"user": ["regexp:.*@toyama01-other$"], "outboundTag": "toyama01-other"}],
         )
 
     async def test_disabled_user_is_excluded_from_clients(self):
@@ -150,7 +156,7 @@ class TestDesiredConfig(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             runtime["inbounds"][0]["settings"]["clients"],
-            [{"id": "u1", "email": "alice@niigata"}],
+            [{"id": "u1", "email": "alice@tokyo01-niigata"}],
         )
 
     async def test_malformed_config_is_skipped_with_a_warning(self):

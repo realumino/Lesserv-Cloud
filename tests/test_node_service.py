@@ -55,14 +55,36 @@ class TestNodeService(unittest.IsolatedAsyncioTestCase):
         )
         payload = {"inbounds": [], "outbounds": []}
 
-        self.assertTrue(await node_service.save_config(self.conn, "tokyo01", payload))
+        self.assertEqual(
+            await node_service.save_config(self.conn, "tokyo01", payload),
+            (True, []),
+        )
 
         node = await node_service.get_node_out(self.conn, "tokyo01")
         self.assertTrue(node["has_config"])
         self.sync_mock.assert_called_once_with(self.conn, "tokyo01")
 
-    async def test_save_config_missing_node_returns_false_and_never_syncs(self):
-        self.assertFalse(await node_service.save_config(self.conn, "ghost", {}))
+    async def test_save_config_missing_node_returns_missing_and_never_syncs(self):
+        self.assertEqual(
+            await node_service.save_config(self.conn, "ghost", {}),
+            (False, []),
+        )
+        self.sync_mock.assert_not_called()
+
+    async def test_save_config_rejects_qualified_tags_without_saving_or_syncing(self):
+        await node_service.create_node(
+            self.conn, NodeCreate(id="tokyo01", label="n")
+        )
+        payload = {"inbounds": [{"tag": "reality-tokyo01"}], "outbounds": []}
+
+        exists, errors = await node_service.save_config(
+            self.conn, "tokyo01", payload
+        )
+
+        self.assertTrue(exists)
+        self.assertEqual(len(errors), 1)
+        node = await node_service.get_node_out(self.conn, "tokyo01")
+        self.assertFalse(node["has_config"])
         self.sync_mock.assert_not_called()
 
 

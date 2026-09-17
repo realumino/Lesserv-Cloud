@@ -14,9 +14,34 @@ never sees storage details.
 import re
 from typing import Literal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, StrictInt, StrictStr, field_validator
 
 _NODE_ID_PATTERN = re.compile(r"[a-z0-9]{1,32}")
+_PROFILE_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
+LINK_PROFILE_OVERRIDE_KEYS = frozenset({
+    "address",
+    "alpn",
+    "fp",
+    "host",
+    "mode",
+    "path",
+    "port",
+    "security",
+    "serviceName",
+    "sni",
+})
+
+
+def _validate_overrides(value):
+    """Check one profile override map against the supported URI inputs."""
+    if not isinstance(value, dict):
+        raise ValueError("overrides must be an object")
+    for key, item in value.items():
+        if key not in LINK_PROFILE_OVERRIDE_KEYS:
+            raise ValueError(f"unsupported override '{key}'")
+        if isinstance(item, bool) or not isinstance(item, (str, int)):
+            raise ValueError(f"override '{key}' must be text or a number")
+    return value
 
 
 class NodeCreate(BaseModel):
@@ -75,6 +100,83 @@ class NodeOut(BaseModel):
     address: str
     created_at: int
     has_config: bool
+
+
+class LinkProfileIn(BaseModel):
+    """The JSON body for POST /api/admin/nodes/{node_id}/link-profiles."""
+
+    id: str
+    inbound_tag: str
+    label: str
+    overrides: dict[str, StrictStr | StrictInt] = {}
+
+    @field_validator("id")
+    @classmethod
+    def id_is_node_scoped_slug(cls, value):
+        """Keep profile ids short, stable, and safe in API paths."""
+        value = value.strip()
+        if not _PROFILE_ID_PATTERN.fullmatch(value):
+            raise ValueError(
+                "profile id must start with a letter or digit and contain "
+                "only lowercase letters, digits, or hyphens"
+            )
+        return value
+
+    @field_validator("inbound_tag", "label")
+    @classmethod
+    def text_is_present(cls, value):
+        """Reject blank inbound attachments and display names."""
+        value = value.strip()
+        if not value:
+            raise ValueError("value must not be empty")
+        return value
+
+    @field_validator("overrides")
+    @classmethod
+    def overrides_are_supported(cls, value):
+        """Restrict overrides to supported client-visible URI inputs."""
+        return _validate_overrides(value)
+
+
+class LinkProfileUpdate(BaseModel):
+    """The JSON body for PUT .../link-profiles/{profile_id}.
+
+    Why every editable field is optional: None means unchanged. Identity
+    fields are never renamed through an update.
+    """
+
+    inbound_tag: str | None = None
+    label: str | None = None
+    overrides: dict[str, StrictStr | StrictInt] | None = None
+
+    @field_validator("inbound_tag", "label")
+    @classmethod
+    def text_is_present_when_provided(cls, value):
+        """Reject a blank value without changing None-means-unchanged."""
+        if value is None:
+            return value
+        value = value.strip()
+        if not value:
+            raise ValueError("value must not be empty")
+        return value
+
+    @field_validator("overrides")
+    @classmethod
+    def overrides_are_supported_when_provided(cls, value):
+        """Validate overrides only when the update supplies them."""
+        if value is None:
+            return value
+        return _validate_overrides(value)
+
+
+class LinkProfileOut(BaseModel):
+    """The JSON the API returns for one link profile."""
+
+    id: str
+    inbound_tag: str
+    label: str
+    overrides: dict[str, StrictStr | StrictInt]
+    created_at: int
 
 
 class AccessIn(BaseModel):
@@ -162,6 +264,8 @@ class ShareLink(BaseModel):
     inbound: str
     outbound: str
     email: str
+    profile: str | None = None
+    label: str | None = None
     uri: str
 
 

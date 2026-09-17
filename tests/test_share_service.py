@@ -6,6 +6,7 @@ Run:
 
 import unittest
 from unittest import mock
+from urllib.parse import quote
 
 from services import share_service
 
@@ -68,15 +69,17 @@ class TestShareService(unittest.TestCase):
             ],
         }
 
-    def _user(self, inbounds=None):
+    def _user(self, inbounds=None, outbounds=None):
         """Return a test user; default inbounds exclude the non-VLESS one."""
+        allowed_outbounds = outbounds or ["JAPAN"]
         return {
             "username": "alice",
             "status": "active",
             "allowed_inbounds": inbounds or ["REALITY_IN", "XHTTP_IN", "WS_IN"],
-            "allowed_outbounds": ["JAPAN"],
+            "allowed_outbounds": allowed_outbounds,
             "uuids": {
-                "alice@JAPAN": "11111111-1111-1111-1111-111111111111",
+                f"alice@{outbound}": "11111111-1111-1111-1111-111111111111"
+                for outbound in allowed_outbounds
             },
         }
 
@@ -191,6 +194,81 @@ class TestShareService(unittest.TestCase):
         self.assertIn("no address for inbound 'REALITY_IN'", warnings)
         self.assertIn("no address for inbound 'WS_IN'", warnings)
 
+    def test_profile_adds_one_variant_per_exit_without_changing_direct(self):
+        user = self._user(
+            ["REALITY_IN", "XHTTP_IN", "WS_IN"], ["HK", "JAPAN"]
+        )
+        profiles = {
+            "XHTTP_IN": [{
+                "id": "cdn",
+                "label": "CDN",
+                "overrides": {"address": "cdn.example.com", "port": 443},
+            }]
+        }
+
+        links, warnings = share_service.links_for_user(
+            user, self._config(), "example.com", profiles=profiles
+        )
+
+        # Three direct inbounds times two exits, plus the XHTTP profile
+        # once for each of the two exits.
+        self.assertEqual(len(links), 8)
+        self.assertEqual(warnings, [])
+        profile_links = [link for link in links if link["profile"] == "cdn"]
+        self.assertEqual(len(profile_links), 2)
+        self.assertIn("cdn.example.com:443", profile_links[0]["uri"])
+        self.assertIsNone(links[0]["profile"])
+        self.assertIsNone(links[0]["label"])
+        self.assertIn("#alice%40", links[0]["uri"])
+
+    def test_labels_name_direct_and_profile_variants(self):
+        profiles = {
+            "XHTTP_IN": [{
+                "id": "cdn",
+                "label": "CDN",
+                "overrides": {"address": "cdn.example.com", "port": 443},
+            }]
+        }
+        labels = {
+            "XHTTP_IN": "XHTTP",
+            "JAPAN": "Japan",
+        }
+
+        links, warnings = share_service.links_for_user(
+            self._user(["XHTTP_IN"]), self._config(), "example.com",
+            profiles=profiles, node_label="Tokyo 01", labels=labels,
+        )
+
+        self.assertEqual(warnings, [])
+        self.assertEqual(
+            [(link["profile"], link["label"]) for link in links],
+            [
+                (None, "Tokyo 01 · XHTTP → Japan"),
+                ("cdn", "Tokyo 01 · CDN → Japan"),
+            ],
+        )
+        self.assertTrue(
+            links[1]["uri"].endswith("#" + quote(links[1]["label"], safe=""))
+        )
+
+    def test_profile_can_supply_an_address_the_direct_view_lacks(self):
+        profiles = {
+            "REALITY_IN": [{
+                "id": "cdn",
+                "label": "CDN",
+                "overrides": {"address": "cdn.example.com", "port": 443},
+            }]
+        }
+
+        links, warnings = share_service.links_for_user(
+            self._user(["REALITY_IN"]), self._config(), "", profiles=profiles
+        )
+
+        self.assertEqual(len(links), 1)
+        self.assertEqual(links[0]["profile"], "cdn")
+        self.assertIn("cdn.example.com:443", links[0]["uri"])
+        self.assertIn("no address for inbound 'REALITY_IN'", warnings)
+
     def test_has_usable_address(self):
         """Detect when at least one inbound has a real listen address."""
         self.assertTrue(
@@ -200,6 +278,9 @@ class TestShareService(unittest.TestCase):
         self.assertTrue(share_service.has_usable_address(self._config(), ""))
         config = {"inbounds": [{"tag": "ONLY", "listen": "0.0.0.0"}]}
         self.assertFalse(share_service.has_usable_address(config, ""))
+        self.assertTrue(
+            share_service.has_usable_address(config, "", ["cdn.example.com"])
+        )
 
 
 # The archived file's TestShareRouter class (GET /api/users/{u}/links,

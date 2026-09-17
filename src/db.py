@@ -27,6 +27,7 @@ import os
 import sqlite3
 
 _ACCESS_JSON_COLS = ("allowed_inbounds", "allowed_outbounds", "uuids")
+_PROFILE_JSON_COLS = ("overrides",)
 
 
 class SqliteConn:
@@ -359,4 +360,77 @@ async def upsert_reality_key(conn, node_id, inbound_tag, private_key, created_at
             created_at = excluded.created_at
         """,
         (node_id, inbound_tag, private_key, created_at),
+    )
+
+
+def _profile_row(row: dict) -> dict:
+    """Decode one link-profile row's JSON overrides into a real dict."""
+    return row_to_dict_with_json(row, _PROFILE_JSON_COLS)
+
+
+async def list_link_profiles(conn, node_id) -> list[dict]:
+    """Return one node's link profiles in deterministic display order."""
+    rows = await conn.execute(
+        "SELECT * FROM link_profiles WHERE node_id = ? "
+        "ORDER BY inbound_tag, id",
+        (node_id,),
+    )
+    return [_profile_row(row) for row in rows]
+
+
+async def get_link_profile(conn, node_id, profile_id) -> dict | None:
+    """Fetch one link profile by node and slug, or None when missing."""
+    rows = await conn.execute(
+        "SELECT * FROM link_profiles WHERE node_id = ? AND id = ?",
+        (node_id, profile_id),
+    )
+    return _profile_row(rows[0]) if rows else None
+
+
+async def create_link_profile(conn, profile: dict):
+    """Insert one complete link-profile row (server facts included)."""
+    await conn.execute(
+        """
+        INSERT INTO link_profiles
+            (node_id, id, inbound_tag, label, overrides, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            profile["node_id"],
+            profile["id"],
+            profile["inbound_tag"],
+            profile["label"],
+            json.dumps(profile["overrides"]),
+            profile["created_at"],
+        ),
+    )
+
+
+async def update_link_profile(conn, profile: dict):
+    """Overwrite one profile's inbound, label, and overrides.
+
+    Why a fixed update: the service merges partial changes first, so SQL
+    stays one statement. Identity columns are never changed here.
+    """
+    await conn.execute(
+        """
+        UPDATE link_profiles
+        SET inbound_tag = ?, label = ?, overrides = ?
+        WHERE node_id = ? AND id = ?
+        """,
+        (
+            profile["inbound_tag"],
+            profile["label"],
+            json.dumps(profile["overrides"]),
+            profile["node_id"],
+            profile["id"],
+        ),
+    )
+
+
+async def delete_link_profile(conn, node_id, profile_id):
+    """Remove one link profile; a missing row is not an error."""
+    await conn.execute(
+        "DELETE FROM link_profiles WHERE node_id = ? AND id = ?",
+        (node_id, profile_id),
     )

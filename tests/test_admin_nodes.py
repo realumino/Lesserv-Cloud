@@ -104,6 +104,19 @@ class AdminNodeApi(unittest.TestCase):
             self.client.get("/api/admin/nodes/tokyo01").json()["has_config"]
         )
 
+    def test_config_rejects_prequalified_tags_without_saving(self):
+        self._create_node()
+        payload = dict(_config())
+        payload["inbounds"] = [dict(_config()["inbounds"][0], tag="reality-tokyo01")]
+
+        response = self.client.put("/api/admin/nodes/tokyo01/config", json=payload)
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("reality-tokyo01", response.json()["detail"][0])
+        self.assertEqual(
+            self.client.get("/api/admin/nodes/tokyo01/config").status_code, 404
+        )
+
     def test_config_endpoints_404_without_config(self):
         self._create_node()
 

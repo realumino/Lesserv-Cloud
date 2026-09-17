@@ -26,7 +26,7 @@ Nothing is stored in qualified form. The qualified names exist only in the
 rendered artifact and in generated share links, which is why renaming a
 node id is a single row update rather than a migration.
 
-## Current status: M1 complete — the panel, with a node dimension
+## Current status: M2 complete — qualifier + link profiles
 
 M1 recreated the archived panel's behavior with the `node` dimension
 wired in from the start: configs, REALITY keys, and per-user access are
@@ -35,7 +35,12 @@ fail-closed route-group guard is live, and the agent-facing columns of
 `nodes` wait for M3. 143 tests pass locally (SQLite backend); the pure
 core (`config_service`, `share_service`, `allocator`, `x25519`) is copied
 with import lines as the only diff. The executable plan and its decisions
-live in [`docs/M1-PLAN.md`](docs/M1-PLAN.md). M0 ran local-only
+live in [`docs/M1-PLAN.md`](docs/M1-PLAN.md). M2 qualified stored local
+tags at render and link-generation time, added per-inbound link profiles
+and readable link labels, rejected pre-qualified tags at paste time, and
+left `build_config` and `apply_reality_keys` unchanged. 172 tests pass
+locally (SQLite backend). The executable plan and its decisions live in
+[`docs/M2-PLAN.md`](docs/M2-PLAN.md). M0 ran local-only
 (`pywrangler dev` + local D1, no Cloudflare account), per the rule below.
 
 M0–M3 involve zero Cloudflare: the render pipeline and the agent protocol
@@ -47,7 +52,7 @@ so that it re-platforms something already proven.
 |---|-----------|--------|
 | 0 | Spike: platform viability | done |
 | 1 | Scaffold + node-scoped data model (one node, SQLite) | done |
-| 2 | Qualifier + link profiles | not started |
+| 2 | Qualifier + link profiles | done |
 | 3 | The agent, split out (systemd, pull over localhost) | not started |
 | 4 | Control plane on Workers + D1 | not started |
 | 5 | Node #2 + the new frontend | not started |
@@ -101,6 +106,10 @@ rewritten to match; qualification is idempotent and covered by tests; link
 generation produces `Σ exits × Σ inbounds (1 + extras)` URIs; and labels
 are readable (stored labels for nodes and profiles, prettified names for
 local tags).
+
+Complete: storage remains local; renders, links, profile variants, labels,
+and paste-time validation implement the above. The executable record is in
+[`docs/M2-PLAN.md`](docs/M2-PLAN.md).
 
 This is where the archived panel's pure core stops being "copied" and
 starts being extended. `build_config` and `apply_reality_keys` must come

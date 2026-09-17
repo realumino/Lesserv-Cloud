@@ -120,7 +120,7 @@ subprocess). The spike evidence behind these shapes is in
 This is the heart of the control plane. Everything else exists to feed it
 or to move its output.
 
-For one node, the pipeline is (M1, no qualifier yet):
+For one node, the pipeline is (M2, with the qualifier):
 
 ```
 nodes.config_json   (authored, opaque, local tags: "reality", "niigata")
@@ -132,9 +132,11 @@ projected users     archived user shape: uuids re-keyed from
       │             status passed through, sorted by username
       │
 reality_service.ensure_keys(conn, node_id, config)
-      │             generates and stores a key per missing REALITY tag
+      │             generates and stores a key per missing REALITY tag,
+      │             indexed by local inbound tag
       │
-      │   ┄┄┄┄┄ [M2 inserts the qualifier here, on the inputs] ┄┄┄┄┄
+qualify_service.qualify_config / qualify_users / qualify_keys
+      │             local inputs become node-qualified inputs; storage is unchanged
       ▼
       ├──────────────────────────┐
       │  build_config            │  copied pure core, untouched:
@@ -173,15 +175,14 @@ rotation, a future agent fetch — guarantees a stored key per REALITY
 inbound before anything is served. That is the archived panel's
 reasoning, now scoped to a node.
 
-## The qualifier (planned, M2)
+## The qualifier (M2)
 
-`qualify_service` is the only genuinely new pure logic still to come. The
-design is already fixed and lives in the table below; nothing in M1
-qualifies anything — stored configs and access rows use local tags, and
-rendered emails are `alice@niigata` because there is exactly one node.
-When M2 lands, this section becomes the description of `qualify_config`,
-`qualify_users`, and `qualify_keys` sandwiched into the render pipeline
-above.
+`qualify_service` is the pure logic that turns local stored names into
+node-scoped render and link names. Storage still uses local tags; rendered
+emails are qualified because every render now carries a node identity.
+`qualify_config`, `qualify_users`, and `qualify_keys` sit between key
+generation and the unchanged pure render core, while `qualify_profiles`
+groups stored profiles under qualified inbounds for link generation.
 
 What it rewrites:
 
@@ -189,9 +190,9 @@ What it rewrites:
 |---|---|---|
 | `inbounds[].tag` | suffix | `reality` → `reality-tokyo01` |
 | `outbounds[].tag` | prefix, **except BLOCK** | `niigata` → `tokyo01-niigata` |
-| `routing.rules[].outboundTag` | prefix | `niigata` → `tokyo01-niigata` |
+| `routing.rules[].outboundTag` | prefix, **except BLOCK** | `niigata` → `tokyo01-niigata` |
 | `routing.rules[].inboundTag[]` | suffix | `xhttp` → `xhttp-tokyo01` |
-| `routing.rules[].user[]` | rewrite `regexp:.*@TAG$` | `.*@niigata$` → `.*@tokyo01-niigata$` |
+| `routing.rules[].user[]` | rewrite a trailing `@TAG`, literal or `regexp:` | `.*@niigata$` → `.*@tokyo01-niigata$` |
 | access inbound lists | suffix | `["reality"]` → `["reality-tokyo01"]` |
 | access outbound lists | prefix | `["niigata"]` → `["tokyo01-niigata"]` |
 | uuid map keys | rewrite the part after `@` | `alice@niigata` → `alice@tokyo01-niigata` |
@@ -201,8 +202,10 @@ The sharp edge is the routing rules. `build_config` appends the generated
 rules *after* the admin's own, so any user-authored rule that references a
 tag must be rewritten too, or it will point at a tag that no longer exists.
 That is why the table above includes `outboundTag`, `inboundTag`, and the
-`user` matcher. The known gap is `routing.balancers[].selector`: balancers
-are rare, and an admin who uses one should write qualified names by hand.
+`user` matcher. The known gaps are `routing.balancers[].selector` and
+chained `outbounds[].proxySettings.tag` references: balancers and proxy
+chains are rare, and an admin who uses them should write qualified names
+by hand.
 
 Two guardrails: qualification must be **idempotent** (applying it twice is
 harmless), and inbound tags must be validated as plain local names at paste
@@ -215,8 +218,9 @@ participates in the naming scheme or in generated rules.
 
 ## The data model
 
-The tables that exist since M1 (schema in `migrations/0001_init.sql`),
-plus the ones still to come. The `node` dimension appears on every table
+The tables below start from M1 (schema in `migrations/0001_init.sql`) and
+include the M2 addition (`migrations/0002_link_profiles.sql`). The `node`
+dimension appears on every table
 that describes something belonging to a specific machine.
 
 | Table | Key | Status | Purpose |
@@ -225,7 +229,7 @@ that describes something belonging to a specific machine.
 | `user_node_access` | `(username, node_id)` | M1 | node membership plus `allowed_inbounds`, `allowed_outbounds`, and the `uuids` map keyed by local outbound |
 | `reality_keys` | `(node_id, inbound_tag)` | M1 | panel-generated X25519 private keys; one per REALITY inbound, many allowed per node |
 | `users` | `username` | M1 | global identity: status, expiry, note |
-| `link_profiles` | `id` | M2 | per-inbound client-side variants (CDN and similar) |
+| `link_profiles` | `(node_id, id)` | M2 | per-inbound client-side variants (CDN and similar) |
 | `config_versions` | `id` | later | history of rendered configs per node, for diff and rollback |
 | `node_stats` | `(node_id, email)` | M7 | traffic counters |
 | `audit_log` | `id` | M4+ | who changed what, with the actor taken from the Access JWT |
@@ -234,7 +238,7 @@ Notes worth keeping in mind:
 
 - **The config lives in the database, not in a file.** `nodes.config_json`
   stores the admin's pasted JSON verbatim — the plane never interprets it
-  (M2 adds tag-name validation at paste time only). The only file artifact
+  beyond tag-name validation at paste time. The only file artifact
   is the rendered runtime config the local stopgap Xray reads
   (`data/runtime/{node_id}.json`).
 - **Agent-facing columns exist from day one.** `token_hash`,
@@ -354,22 +358,25 @@ uuid. The number of links a user has on a node is:
 Σ over allowed exits ( Σ over allowed inbounds ( 1 + extra link profiles ) )
 ```
 
-(M1 has no link profiles yet — the formula's `extra` term is zero and the
-table does not exist until M2. The `1 +` already describes what ships.)
+Each profile attached to an inbound adds one URI per allowed exit; the
+direct URI remains first.
 
 The direct view is derived from the inbound's `streamSettings` plus the
 node's `address` — `nodes.address` replaced the archived panel's global
 `SERVER_ADDRESS`, so two nodes produce different URIs for the same user
-and no environment variable is involved. Extra profiles will be rows in
+and no environment variable is involved. Extra profiles are rows in
 `link_profiles`, per-inbound because they describe a client-side view of
 that inbound — CDN fronting only makes sense for HTTP transports, so
-`xhttp` could have a `cdn` profile and `reality` cannot.
+`xhttp` could have a `cdn` profile and `reality` cannot. Profile writes
+never render, sync, or restart: they affect only generated links.
 
 Since M1, the links endpoint (`GET /api/admin/users/{u}/links`)
 aggregates across every node the user has an access row on: each link
 carries its `node`, warnings are prefixed with the node id, and a node
 without a config is skipped with a warning rather than failing the whole
-request. The archived status codes survive: 404 unknown user, 503 when
+request. Since M2, link fields use qualified names and every link carries
+a readable `label` and optional `profile`. The archived status codes
+survive: 404 unknown user, 503 when
 the user has access but no node has a config, 409 when no node has a
 usable address.
 
@@ -378,7 +385,7 @@ stored labels for nodes and profiles, and prettified names for local tags.
 Nothing stores a display name for a tag inside the opaque config, because
 that is state that rots the moment the pasted JSON changes. Since labels
 are cosmetic, renaming one never breaks a client — only a UUID change or a
-key rotation does. (Labels arrive with the M2/M5 UI work.)
+key rotation does. The same naming helper feeds any future UI, including M5.
 
 A **subscription** is the aggregation (M6): `/sub/{token}` returns base64
 of newline-joined URIs, covering every node the user is entitled to, each

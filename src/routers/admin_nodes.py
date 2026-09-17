@@ -103,10 +103,13 @@ async def put_config(node_id: str, payload: dict = Body(...), conn=Depends(conn)
     Why PUT instead of the archived POST: replacing the whole document is
     idempotent, so a retried request can never double-apply. The body is
     a plain dict because the config is opaque — FastAPI rejects non-JSON
-    bodies as 422.
+    bodies as 422. Pre-qualified local tags are rejected without saving.
     """
-    if not await node_service.save_config(conn, node_id, payload):
+    exists, errors = await node_service.save_config(conn, node_id, payload)
+    if not exists:
         raise HTTPException(status_code=404, detail="node not found")
+    if errors:
+        raise HTTPException(status_code=422, detail=errors)
     return {"message": "config updated"}
 
 

@@ -35,12 +35,12 @@ class TestApplyMigrations(unittest.IsolatedAsyncioTestCase):
     async def test_applies_init_and_creates_tables(self):
         applied = await apply_migrations(self.conn, "migrations")
 
-        self.assertEqual(applied, ["0001_init.sql"])
+        self.assertEqual(applied, ["0001_init.sql", "0002_link_profiles.sql"])
         rows = await self.conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table'"
         )
         names = {row["name"] for row in rows}
-        for table in ("nodes", "users", "user_node_access", "reality_keys"):
+        for table in ("nodes", "users", "user_node_access", "reality_keys", "link_profiles"):
             self.assertIn(table, names)
 
     async def test_second_run_applies_nothing(self):

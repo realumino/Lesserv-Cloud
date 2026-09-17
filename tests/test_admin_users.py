@@ -145,7 +145,11 @@ class AdminUserApi(unittest.TestCase):
         self.assertEqual(len(links), 1)
         link = links[0]
         self.assertEqual(link["node"], "tokyo01")
-        self.assertEqual(link["email"], "alice@niigata")
+        self.assertEqual(link["inbound"], "reality-tokyo01")
+        self.assertEqual(link["outbound"], "tokyo01-niigata")
+        self.assertEqual(link["email"], "alice@tokyo01-niigata")
+        self.assertIsNone(link["profile"])
+        self.assertEqual(link["label"], "Node · REALITY → Niigata")
         uri = link["uri"]
         self.assertIn("vless://", uri)
         self.assertIn("funky.example.com:443", uri)
@@ -153,6 +157,31 @@ class AdminUserApi(unittest.TestCase):
         self.assertIn("sid=1234", uri)
         keys = self.client.get("/api/admin/nodes/tokyo01/reality").json()["keys"]
         self.assertIn(f"pbk={keys[0]['public_key']}", uri)
+
+    def test_links_include_one_profile_variant_per_exit(self):
+        self._make_node(config=_config())
+        self._make_user()
+        created = self.client.post("/api/admin/nodes/tokyo01/link-profiles", json={
+            "id": "cdn",
+            "inbound_tag": "reality",
+            "label": "CDN",
+            "overrides": {"address": "cdn.example.com", "port": 443},
+        })
+        assert created.status_code == 201, created.text
+
+        response = self.client.get("/api/admin/users/alice/links")
+
+        self.assertEqual(response.status_code, 200)
+        links = response.json()["links"]
+        self.assertEqual(len(links), 2)
+        self.assertEqual(
+            [(link["profile"], link["label"]) for link in links],
+            [
+                (None, "Node · REALITY → Niigata"),
+                ("cdn", "Node · CDN → Niigata"),
+            ],
+        )
+        self.assertIn("cdn.example.com:443", links[1]["uri"])
 
     def test_links_404_unknown_user(self):
         self.assertEqual(

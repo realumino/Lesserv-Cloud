@@ -143,9 +143,10 @@ class TestSync(unittest.IsolatedAsyncioTestCase):
         await xray_service.sync_node(self.conn, "tokyo01")
 
         runtime = xray_service.load_runtime_config("tokyo01")
+        self.assertEqual(runtime["inbounds"][0]["tag"], "reality-tokyo01")
         self.assertEqual(
             runtime["inbounds"][0]["settings"]["clients"],
-            [{"id": "u1", "email": "alice@niigata"}],
+            [{"id": "u1", "email": "alice@tokyo01-niigata"}],
         )
         self.assertNotEqual(
             runtime["inbounds"][0]["streamSettings"]["realitySettings"]["privateKey"],

@@ -10,7 +10,7 @@ import time
 
 import db
 from models import NodeCreate, NodeUpdate
-from services import xray_service
+from services import qualify_service, xray_service
 
 
 def _to_out(node: dict) -> dict:
@@ -68,18 +68,21 @@ async def list_nodes_out(conn) -> list[dict]:
     return [_to_out(node) for node in await db.list_nodes(conn)]
 
 
-async def save_config(conn, node_id, payload) -> bool:
-    """Replace a node's opaque config and sync it; False when missing.
+async def save_config(conn, node_id, payload) -> tuple[bool, list[str]]:
+    """Replace a node's opaque config and sync it, when its tags are valid.
 
     Why the dict is stored untouched: the config is opaque — the plane
-    never validates or interprets its structure (M2 adds tag-name
-    validation at paste time only). The sync here is the archived POST
-    /api/config behavior: the database changed, the local runtime must
-    react.
+    never validates or interprets its structure, except for tag-name
+    validation at paste time. The tuple separates a missing node from an
+    invalid payload: `(False, [])` means 404, `(True, errors)` means 422,
+    and `(True, [])` means the config was saved and synced.
     """
     node = await db.get_node(conn, node_id)
     if node is None:
-        return False
+        return False, []
+    errors = qualify_service.local_tag_errors(payload, node_id)
+    if errors:
+        return True, errors
     await db.set_node_config(conn, node_id, payload)
     await xray_service.sync_node(conn, node_id)
-    return True
+    return True, []

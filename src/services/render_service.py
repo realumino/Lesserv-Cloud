@@ -6,9 +6,9 @@ plane can compute a node's desired hash with no side effects beyond reads
 and key generation. The archived panel's pure core (config_service) is
 reused untouched; this module only prepares its inputs.
 
-This module is the single seam M2's qualifier plugs into: the projection
-below rebuilds the archived user shape with local tags, and the qualifier
-will rewrite those shapes (and the config's tags) between projection and
+This module is the single seam where the qualifier plugs in: the projection
+below rebuilds the archived user shape with local tags, and qualification
+rewrites those shapes (and the config's tags) between projection and
 `build_config`. If `build_config` or `apply_reality_keys` ever need
 editing to make multi-node work, the qualifier is doing its job wrong.
 """
@@ -17,7 +17,7 @@ import hashlib
 import json
 
 from db import get_node, list_access_for_node, list_users
-from services import config_service, reality_service
+from services import config_service, qualify_service, reality_service
 
 
 def user_shape(username, status, access_row) -> dict:
@@ -25,7 +25,7 @@ def user_shape(username, status, access_row) -> dict:
 
     Why the email is rebuilt here: storage keys uuids by local outbound
     tag (per the locked data model); build_config and the allocator look
-    clients up by client email (`username@outboundtag`). M2's qualifier
+    clients up by client email (`username@outboundtag`). `qualify_users`
     rewrites exactly this line — the stored key and the pure core never
     change.
     """
@@ -80,8 +80,11 @@ async def desired_config(conn, node_id) -> tuple[dict | None, list[str]]:
     users = await node_users(conn, node_id)
     try:
         keys = await reality_service.ensure_keys(conn, node_id, config)
-        runtime, warnings = config_service.build_config(config, users)
-        warnings = warnings + config_service.apply_reality_keys(runtime, keys)
+        qualified_config = qualify_service.qualify_config(config, node_id)
+        qualified_users = qualify_service.qualify_users(users, node_id)
+        qualified_keys = qualify_service.qualify_keys(keys, node_id)
+        runtime, warnings = config_service.build_config(qualified_config, qualified_users)
+        warnings = warnings + config_service.apply_reality_keys(runtime, qualified_keys)
     except (KeyError, TypeError, AttributeError) as error:
         return None, [f"config looks malformed ({error}); skipping render"]
     return runtime, warnings

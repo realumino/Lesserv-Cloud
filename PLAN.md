@@ -26,17 +26,17 @@ Nothing is stored in qualified form. The qualified names exist only in the
 rendered artifact and in generated share links, which is why renaming a
 node id is a single row update rather than a migration.
 
-## Current status: M0 complete — platform viable
+## Current status: M1 complete — the panel, with a node dimension
 
-M0's verdict: **go**. The same FastAPI `app` object runs under uvicorn
-locally and inside a Worker; the pure core (x25519, allocator) passes the
-RFC 7748 vectors unmodified under Pyodide; a D1 row and an AES-GCM
-ciphertext both round-trip through `db.py`; the TestClient suite passes
-locally (21/21). The binding constraints discovered (no entropy at
-import time, `src/` as import root, async-everywhere `db.py`) live in
-[`docs/M0-FINDINGS.md`](docs/M0-FINDINGS.md) and are already encoded in
-the scaffold and its tests. M0 ran local-only (`pywrangler dev` + local
-D1, no Cloudflare account), per the rule below.
+M1 recreated the archived panel's behavior with the `node` dimension
+wired in from the start: configs, REALITY keys, and per-user access are
+all node-scoped, the render path takes a node (`render_service`), the
+fail-closed route-group guard is live, and the agent-facing columns of
+`nodes` wait for M3. 143 tests pass locally (SQLite backend); the pure
+core (`config_service`, `share_service`, `allocator`, `x25519`) is copied
+with import lines as the only diff. The executable plan and its decisions
+live in [`docs/M1-PLAN.md`](docs/M1-PLAN.md). M0 ran local-only
+(`pywrangler dev` + local D1, no Cloudflare account), per the rule below.
 
 M0–M3 involve zero Cloudflare: the render pipeline and the agent protocol
 are built and debugged locally first, on the one VPS available. The
@@ -46,7 +46,7 @@ so that it re-platforms something already proven.
 | # | Milestone | Status |
 |---|-----------|--------|
 | 0 | Spike: platform viability | done |
-| 1 | Scaffold + node-scoped data model (one node, SQLite) | not started |
+| 1 | Scaffold + node-scoped data model (one node, SQLite) | done |
 | 2 | Qualifier + link profiles | not started |
 | 3 | The agent, split out (systemd, pull over localhost) | not started |
 | 4 | Control plane on Workers + D1 | not started |
@@ -78,6 +78,9 @@ hand-rolled `fetch(request)` dispatcher, or TypeScript with Hono. The
 verdict is the deliverable, not the code.
 
 ### M1 — Scaffold + node-scoped data model
+
+Executable plan: [`docs/M1-PLAN.md`](docs/M1-PLAN.md) (step-by-step,
+decision-by-decision, with the test inventory and verification commands).
 
 Recreate the archived panel's behavior here with a `node` dimension
 present from the start, still on SQLite, still one process.

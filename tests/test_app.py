@@ -1,9 +1,9 @@
-"""Tests for the app object and the spike routes under the local runtime.
+"""Tests for the app object under the local runtime.
 
-Why TestClient matters for M0: criterion (e) is that adding the dual-
-runtime machinery did not break ordinary local testing. These tests boot
-the same `app` workerd runs, with the SQLite backend attached, and assert
-the same JSON the Worker runtime returned during the spike.
+Why TestClient matters: it boots the same `app` workerd runs, with the
+SQLite backend attached by the lifespan, and asserts the routes both
+runtimes must serve. Route-group and admin-surface tests live in their own
+files; this one pins the wiring only.
 """
 
 import unittest
@@ -11,6 +11,7 @@ import unittest
 from fastapi.testclient import TestClient
 
 import local
+from tests.support import cleanup_db, make_test_app, open_fresh_db_sync
 
 
 class TestHealth(unittest.TestCase):
@@ -23,46 +24,49 @@ class TestHealth(unittest.TestCase):
         self.assertEqual(response.json(), {"status": "ok"})
 
 
-class TestSelfCheck(unittest.TestCase):
-    """The spike harness runs against the SQLite backend.
+class TestStartup(unittest.TestCase):
+    """The lifespan opens SQLite and applies the real schema migrations.
 
-    Why not assert overall `ok`: the WebCrypto check is skipped outside
-    workerd by design (criterion (d) is a Worker-runtime claim), so a
-    passing local run has one skipped check and three passes. The env
-    opt-in also doubles as the proof that the spike gate fails closed.
+    Why this exercises data/panel.db: it is the exact startup path a local
+    run takes; asserting the schema exists here proves migrations and the
+    lifespan wiring work together end to end. The dev database is
+    disposable (gitignored); tests must never require it to pre-exist.
     """
 
-    def setUp(self):
-        import os
-        from unittest import mock
+    def test_lifespan_attaches_conn_with_schema(self):
+        import asyncio
 
-        self.env = mock.patch.dict(os.environ, {"LESSERV_SPIKE": "1"})
-        self.env.start()
-        self.addCleanup(self.env.stop)
+        import local
 
-    def test_pure_checks_pass(self):
-        with TestClient(local.app) as client:
-            body = client.get("/api/spike/self-check").json()
-        self.assertTrue(body["checks"]["x25519_rfc7748"]["ok"])
-        self.assertTrue(body["checks"]["allocator"]["ok"])
-        self.assertTrue(body["checks"]["db_roundtrip"]["ok"])
+        async def scenario():
+            async with local.lifespan(local.app):
+                rows = await local.app.state.conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+                return {row["name"] for row in rows}
 
-    def test_crypto_check_is_skipped_locally(self):
-        with TestClient(local.app) as client:
-            body = client.get("/api/spike/self-check").json()
-        self.assertFalse(body["checks"]["aes_gcm_d1_roundtrip"]["ok"])
-        self.assertIn("skipped", body["checks"]["aes_gcm_d1_roundtrip"]["failures"][0])
+        names = asyncio.run(scenario())
+        for table in ("nodes", "users", "user_node_access", "reality_keys"):
+            self.assertIn(table, names)
 
-    def test_spike_route_disabled_without_opt_in(self):
-        """Fail-closed: without LESSERV_SPIKE the diagnostics route 404s."""
-        import os
-        from unittest import mock
 
-        with mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("LESSERV_SPIKE", None)
-            with TestClient(local.app) as client:
-                response = client.get("/api/spike/self-check")
-        self.assertEqual(response.status_code, 404)
+class TestAdminSmoke(unittest.TestCase):
+    """One request through guard, routing, dependency, db, and schema.
+
+    Why a smoke test here: it proves the admin surface works end to end
+    on a fresh app — path allowed by the guard, conn dependency resolving
+    from app.state, migrations having created the table.
+    """
+
+    def test_admin_nodes_returns_empty_list(self):
+        conn, path = open_fresh_db_sync()
+        self.addCleanup(cleanup_db, conn, path)
+
+        with TestClient(make_test_app(conn)) as client:
+            response = client.get("/api/admin/nodes")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [])
 
 
 if __name__ == "__main__":

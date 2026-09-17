@@ -80,7 +80,7 @@ The same `app` object (`src/main.py`) runs in two places, and that is a
 tested property, not an aspiration:
 
 ```
-src/main.py      create_app() — routes only, imports nothing platform-specific
+src/main.py      create_app() — routes, the route-group guard, nothing platform-specific
 src/local.py     imports app, attaches SQLite to app.state, serves via uvicorn
 src/worker.py    imports app, serves via workers.asgi (D1 arrives on the request scope)
 ```
@@ -89,17 +89,30 @@ The piece that makes one app serve both backends is the **conn
 interface**: `await conn.execute(sql, params) -> list[dict]`. Locally,
 `SqliteConn` wraps `sqlite3` (and commits, so tests see writes). On
 Workers, `D1Conn` wraps the D1 binding. Both live in `db.py`, and a
-request-scoped dependency (`db.get_conn`) picks one — from `app.state`
-locally, from `request.scope["env"].DB` inside workerd. Routers and
+request-scoped dependency (`routers/deps.py:conn`) picks one — from
+`app.state` locally, from `request.scope["env"].DB` inside workerd. The
+dependency lives in `routers/` and not `db.py` on purpose: FastAPI only
+recognizes a `Request` parameter through its type annotation, and that
+annotation is HTTP knowledge, which `db.py` must not have. Routers and
 services are identical in both runtimes; `tests/test_app.py` boots the
-Worker app under TestClient with the SQLite backend and would catch any
-drift.
+app under TestClient with the SQLite backend and would catch any drift.
+
+The schema comes from `migrations/*.sql` — the single source of truth for
+both backends. Locally, `local.py`'s lifespan applies them through
+`migrations.py` (a tiny runner that records applied filenames in a
+`schema_migrations` table); on Workers, wrangler applies the same files
+(`d1 migrations apply`), which is why M4's "migrations apply cleanly to a
+fresh D1" is automatic rather than a rewrite.
 
 The import root is `src/` (the directory workerd treats as the module
 root), so application imports are flat: `from core.x25519 import ...`.
 uvicorn matches it with `--app-dir src`; tests get the same root from the
-shim in `tests/__init__.py`. The spike evidence behind these shapes —
-including the no-entropy-at-import rule for the deploy snapshot — is in
+shim in `tests/__init__.py`. One extra rule found by the deploy-snapshot
+test: `local.py` imports `uvicorn` lazily inside its `main()` — uvicorn
+drags in `multiprocessing`, whose import draws entropy, and every module
+that ships must import cleanly with a poisoned PRNG (see
+`tests/test_import_hygiene.py`, which runs the poison import in a
+subprocess). The spike evidence behind these shapes is in
 `docs/M0-FINDINGS.md`.
 
 ## The render pipeline
@@ -107,54 +120,68 @@ including the no-entropy-at-import rule for the deploy snapshot — is in
 This is the heart of the control plane. Everything else exists to feed it
 or to move its output.
 
-For one node, the pipeline is four steps in a fixed order:
+For one node, the pipeline is (M1, no qualifier yet):
 
 ```
-node.config_json   (authored, identity-free: "reality", "niigata")
+nodes.config_json   (authored, opaque, local tags: "reality", "niigata")
       │
-      │  qualify_config(config, node.id)
+      │  render_service.node_users(conn, node_id)
       ▼
-qualified config    (reality-tokyo01, tokyo01-niigata, BLOCK untouched)
-
-user_node_access rows for that node
-      │  qualify_users(rows, node.id)      → inbound/outbound lists and
-      ▼                                       uuid keys get the same names
-reality_keys rows for that node
-      │  qualify_keys(keys, node.id)       → keyed by qualified tag
+projected users     archived user shape: uuids re-keyed from
+      │             {"niigata": u} to {"alice@niigata": u},
+      │             status passed through, sorted by username
+      │
+reality_service.ensure_keys(conn, node_id, config)
+      │             generates and stores a key per missing REALITY tag
+      │
+      │   ┄┄┄┄┄ [M2 inserts the qualifier here, on the inputs] ┄┄┄┄┄
       ▼
       ├──────────────────────────┐
-      │  build_config            │  unchanged pure core: fills clients,
-      │  apply_reality_keys      │  appends routing rules, injects keys
+      │  build_config            │  copied pure core, untouched:
+      │  apply_reality_keys      │  fills clients, appends routing
+      │                          │  rules, injects keys
       └──────────────────────────┘
       ▼
-rendered runtime config  →  sha256  →  served to that node's agent
+rendered runtime config  →  config_hash (canonical JSON, sha256)
+                         →  written to data/runtime/{node}.json
+                         →  local Xray restarted (M1–M2 stopgap)
 ```
 
 Three properties matter more than the individual steps:
 
-**Qualification happens on the inputs, not the output.** Because
-`qualify_config` runs before `build_config`, the allocator sees qualified
-tags and emits qualified emails and rules on its own. `build_config` and
-`apply_reality_keys` are never touched — if they need editing to make
-multi-node work, the qualifier is wrong.
+**The projection is the seam, the pure core never changes.**
+`render_service.user_shape` rebuilds the archived user dict — storage
+keys uuids by local outbound tag, the allocator wants
+`username@outboundtag` emails — and `build_config`/`apply_reality_keys`
+arrive from the archived panel byte-for-byte except for one import line.
+M2's qualifier rewrites the projection and the config's tags; if the
+pure core ever needs editing to make multi-node work, the qualifier is
+wrong.
 
-**Nothing qualified is stored.** The database only ever holds local names
-scoped by `(node_id, tag)`. The qualified form is a projection that exists
-for the length of one render and inside generated share links. That is why
-renaming a node id is one `UPDATE nodes` plus a re-render instead of a
-migration across every config, policy row, and key.
+**Rendering is per node and deterministic.** Given a node row, its
+access rows, and its keys, the output is a deterministic function of the
+inputs — projections are sorted (users by username, nodes by id) so the
+same database state renders byte-identical output, which is what
+`config_hash` (canonical JSON, sorted keys) depends on. `desired_config`
+returns `(None, [])` for a node without a config and `(None, [warning])`
+for a malformed one: the render never raises, exactly like the archived
+sync warned and skipped.
 
-**Rendering is pure and per-node.** Given a node row, its access rows, and
-its keys, the output is a deterministic function of the inputs. That makes
-it testable with plain dicts, exactly like the archived
-`test_config_service.py`, and it means the plane can compute a node's
-desired hash without any side effects.
+**Key generation has one choke point.** `ensure_keys` runs inside
+`desired_config`, so every path that renders a config — a save, a
+rotation, a future agent fetch — guarantees a stored key per REALITY
+inbound before anything is served. That is the archived panel's
+reasoning, now scoped to a node.
 
-## The qualifier
+## The qualifier (planned, M2)
 
-`qualify_service` is the only genuinely new pure logic in the control
-plane compared to the archived panel. It is small, and it has one sharp
-edge.
+`qualify_service` is the only genuinely new pure logic still to come. The
+design is already fixed and lives in the table below; nothing in M1
+qualifies anything — stored configs and access rows use local tags, and
+rendered emails are `alice@niigata` because there is exactly one node.
+When M2 lands, this section becomes the description of `qualify_config`,
+`qualify_users`, and `qualify_keys` sandwiched into the render pipeline
+above.
 
 What it rewrites:
 
@@ -188,36 +215,48 @@ participates in the naming scheme or in generated rules.
 
 ## The data model
 
-D1 tables, and what each one is for. The `node` dimension appears on every
-table that describes something belonging to a specific machine.
+The tables that exist since M1 (schema in `migrations/0001_init.sql`),
+plus the ones still to come. The `node` dimension appears on every table
+that describes something belonging to a specific machine.
 
-| Table | Key | Purpose |
-|---|---|---|
-| `nodes` | `id` (`tokyo01`) | identity, label, public `address`, token hash, the authored `config_json`, applied hash, last-seen, health, versions, last error |
-| `reality_keys` | `(node_id, inbound_tag)` | panel-generated X25519 private keys, encrypted at rest; one per REALITY inbound, many allowed per node |
-| `user_node_access` | `(username, node_id)` | node membership plus `allowed_inbounds`, `allowed_outbounds`, and the `uuids` map keyed by local outbound |
-| `link_profiles` | `id` | per-inbound client-side variants (CDN and similar): name plus address/SNI/host/path overrides |
-| `users` | `username` | global identity: status, expiry, note, subscription token |
-| `config_versions` | `id` | history of rendered configs per node, for diff and rollback |
-| `node_stats` | `(node_id, email)` | traffic counters (milestone 7) |
-| `audit_log` | `id` | who changed what, with the actor taken from the Access JWT |
+| Table | Key | Status | Purpose |
+|---|---|---|---|
+| `nodes` | `id` (`tokyo01`) | M1 | identity, label, public `address`, the authored `config_json`, token hash, applied hash, last-seen, health, versions, last error |
+| `user_node_access` | `(username, node_id)` | M1 | node membership plus `allowed_inbounds`, `allowed_outbounds`, and the `uuids` map keyed by local outbound |
+| `reality_keys` | `(node_id, inbound_tag)` | M1 | panel-generated X25519 private keys; one per REALITY inbound, many allowed per node |
+| `users` | `username` | M1 | global identity: status, expiry, note |
+| `link_profiles` | `id` | M2 | per-inbound client-side variants (CDN and similar) |
+| `config_versions` | `id` | later | history of rendered configs per node, for diff and rollback |
+| `node_stats` | `(node_id, email)` | M7 | traffic counters |
+| `audit_log` | `id` | M4+ | who changed what, with the actor taken from the Access JWT |
 
 Notes worth keeping in mind:
 
+- **The config lives in the database, not in a file.** `nodes.config_json`
+  stores the admin's pasted JSON verbatim — the plane never interprets it
+  (M2 adds tag-name validation at paste time only). The only file artifact
+  is the rendered runtime config the local stopgap Xray reads
+  (`data/runtime/{node_id}.json`).
+- **Agent-facing columns exist from day one.** `token_hash`,
+  `applied_hash`, `last_seen`, `health`, `agent_version`, `xray_version`,
+  `last_error` sit in `nodes` waiting for M3; a migration at M3 would be
+  one line, but the locked data model has them now.
 - **`user_node_access` is the Option B model.** Membership is a stored row
   rather than something inferred from whether a user's tag strings happen
   to exist in some node's config. This is what makes "who can use node X?"
   a query instead of a scan, and what makes "an inbound from tokyo01 with
   an exit from almaty02" unrepresentable rather than merely wrong.
 - **Two independent lists, no pairing.** Inbound and outbound allowed-sets
-  are crossed by the allocator, exactly as before. A user allowed on a node
-  with inbounds but no outbounds simply produces nothing there.
+  are crossed by the allocator, exactly as before. A user allowed on a
+  node with inbounds but no outbounds simply produces nothing there.
 - **`uuids` is keyed by local outbound** (`{"niigata": "..."}`), scoped by
-  the row's node. The allocator still looks up `username@tag`, so the
-  qualifier builds that lookup key at render time. Stability is preserved:
-  adding an outbound mints one new uuid and leaves the rest alone.
+  the row's node. The allocator looks up `username@tag`, so
+  `render_service.user_shape` builds that lookup key at render time.
+  Stability is preserved: adding an outbound mints one new uuid and leaves
+  the rest alone.
 - **JSON text columns are fine** at this scale, same reasoning as the
-  archived panel: optimize when it hurts.
+  archived panel: optimize when it hurts. No foreign keys — deletes are
+  explicit (`db.delete_user` removes access rows first).
 
 ## Trust boundaries
 
@@ -240,6 +279,17 @@ The header is only meaningful on a path Access actually covers — on an
 uncovered path it is attacker-controlled, which is one more reason the
 route groups must be exhaustive and closed.
 
+**The in-app half of the boundary (since M1).** Cloudflare Access is M4,
+but the route-group rule is enforced in the app already: `main.py`
+registers a middleware backed by `route_groups.is_allowed_path`, and any
+request outside the four prefixes gets a bare 404 before routing — even a
+route someone registers at the wrong prefix later. FastAPI's `/docs`,
+`/redoc`, and `/openapi.json` are disabled for the same reason: they sit
+at the root, outside every group, and the guard is fail-closed. The
+pre-M4 admin surface is therefore unauthenticated by design: on a dev
+machine `localhost` is the boundary, and the fail-closed check is about
+*paths*, not identity.
+
 **Node.** 32 random bytes, base64url, shown once at creation and stored
 only as a hash. Hashed rather than encrypted for the same reason API keys
 are hashed generally: it is high-entropy random, so it cannot be brute
@@ -260,19 +310,26 @@ that contains nothing but the links.
 
 ## Key custody
 
-The control plane generates every REALITY private key and stores it in D1,
-encrypted with AES-256-GCM using a key held in a Worker secret. The
-ciphertext is stored with a scheme prefix and its IV, so the format can be
-rotated later without a migration:
+The control plane generates every REALITY private key and stores it in
+the database. The target storage is AES-256-GCM ciphertext with a key
+held in a Worker secret:
 
 ```
 v1:<base64(iv || ciphertext+tag)>
 ```
 
-Only `reality_keys.private_key` is encrypted. User UUIDs and node configs
-are far less sensitive, and encrypting everything would make every query
-worse for no real gain. Node tokens are a third thing again: hashed, not
-encrypted, because they are never read back.
+**Status: plaintext until M4.** The scheme prefix and its IV mean the
+format can rotate later without a migration, and every stored value is
+self-contained — but `crypto.py` speaks WebCrypto, which only exists
+inside workerd, and the encryption key is a Worker secret that does not
+exist until M4. M1–M3 therefore store the private key as-is, and M4 adds
+the secret plus a one-time re-encrypt of existing rows. The runtime
+invariant below holds from day one.
+
+Only `reality_keys.private_key` will be encrypted. User UUIDs and node
+configs are far less sensitive, and encrypting everything would make every
+query worse for no real gain. Node tokens are a third thing again: hashed,
+not encrypted, because they are never read back.
 
 Two invariants:
 
@@ -297,50 +354,80 @@ uuid. The number of links a user has on a node is:
 Σ over allowed exits ( Σ over allowed inbounds ( 1 + extra link profiles ) )
 ```
 
-The `1 +` is the direct view, derived from the inbound's `streamSettings`
-plus the node's `address`. Extra profiles are rows in `link_profiles`, and
-they are per-inbound because they describe a client-side view of that
-inbound — CDN fronting only makes sense for HTTP transports, so `xhttp`
-can have a `cdn` profile and `reality` cannot. Because the stored profile
-is an override and the direct view is derived, a profile can never drift
-out of sync with the inbound it describes.
+(M1 has no link profiles yet — the formula's `extra` term is zero and the
+table does not exist until M2. The `1 +` already describes what ships.)
+
+The direct view is derived from the inbound's `streamSettings` plus the
+node's `address` — `nodes.address` replaced the archived panel's global
+`SERVER_ADDRESS`, so two nodes produce different URIs for the same user
+and no environment variable is involved. Extra profiles will be rows in
+`link_profiles`, per-inbound because they describe a client-side view of
+that inbound — CDN fronting only makes sense for HTTP transports, so
+`xhttp` could have a `cdn` profile and `reality` cannot.
+
+Since M1, the links endpoint (`GET /api/admin/users/{u}/links`)
+aggregates across every node the user has an access row on: each link
+carries its `node`, warnings are prefixed with the node id, and a node
+without a config is skipped with a warning rather than failing the whole
+request. The archived status codes survive: 404 unknown user, 503 when
+the user has access but no node has a config, 409 when no node has a
+usable address.
 
 Labels are readable: `Tokyo 01 · REALITY → Niigata`. The pieces come from
 stored labels for nodes and profiles, and prettified names for local tags.
 Nothing stores a display name for a tag inside the opaque config, because
 that is state that rots the moment the pasted JSON changes. Since labels
 are cosmetic, renaming one never breaks a client — only a UUID change or a
-key rotation does.
+key rotation does. (Labels arrive with the M2/M5 UI work.)
 
-A **subscription** is the aggregation: `/sub/{token}` returns base64 of
-newline-joined URIs, covering every node the user is entitled to, each link
-carrying its own node's address. This is where the fleet model pays off for
-the user — granting access to a second node enriches an existing URL
-without the URL changing. A disabled or expired user gets an empty body
-rather than an error: their links are already gone from the server side,
-and an empty response tells the client nothing new.
+A **subscription** is the aggregation (M6): `/sub/{token}` returns base64
+of newline-joined URIs, covering every node the user is entitled to, each
+link carrying its own node's address. This is where the fleet model pays
+off for the user — granting access to a second node enriches an existing
+URL without the URL changing. A disabled or expired user gets an empty
+body rather than an error: their links are already gone from the server
+side, and an empty response tells the client nothing new.
 
 ## Life of a change: the admin edits a user
 
-1. The admin saves the user form. Access has already authenticated them,
-   and the JWT's email will become the audit actor.
+1. The admin saves the user form. (M4 adds Access authentication; before
+   that, the dev machine's localhost is the boundary.)
 2. The router validates the payload and calls the user service, which
    writes `users` and the `user_node_access` rows and runs `ensure_uuids`
    per node — existing pairs keep their UUID, new pairs get one.
-3. Nothing is pushed. There is no fan-out, because there is nothing to
+3. **M1–M2 stopgap:** the service syncs every affected node locally —
+   render, write the runtime file, bounce the local Xray process, exactly
+   like the archived panel. **From M3 this step is empty**; the sync calls
+   are the archived single-node behavior and the agent split deletes them.
+4. Nothing is pushed. There is no fan-out, because there is nothing to
    fan out: the plane does not track a version per node.
-4. On each node's next heartbeat, the plane renders that node's desired
-   state, hashes it, and compares it to the hash the node reported. A node
-   whose authorized user set changed now has a different hash.
-5. That node's agent fetches the new config, tests it, snapshots the old
-   one, swaps it in, restarts Xray, and reports the applied hash.
-6. The fleet view stops showing that node as drifted.
+5. From M3: on each node's next heartbeat, the plane renders that node's
+   desired state, hashes it (`config_hash` — included and tested since
+   M1), and compares it to the hash the node reported. A node whose
+   authorized user set changed now has a different hash.
+6. From M3: that node's agent fetches the new config, tests it, snapshots
+   the old one, swaps it in, restarts Xray, and reports the applied hash.
+   The fleet view stops showing that node as drifted.
 
-The important property: **step 3 is empty.** Content-hash convergence means
+The important property: **step 4 is empty.** Content-hash convergence means
 a user edit does not have to know which nodes are affected, which is what
-removes an entire class of ordering and fan-out bugs.
+removes an entire class of ordering and fan-out bugs. (In M1 the affected
+set is still computed — to drive the stopgap sync — but the *render* never
+needs it, and M3 deletes the computation with the sync.)
 
-## Life of a heartbeat
+```
+agent → POST /api/node/heartbeat
+        X-Lesserv-Node: tokyo01      + bearer token
+        {protocol: 1, applied_hash: "ab12…", xray_running: true, …}
+
+plane → looks up the node by id, compares the token hash,
+        renders the node's desired config, hashes it,
+        returns {desired_hash: "cd34…", actions: []}
+
+agent → hashes differ → GET /api/node/config?hash=cd34… → applies → reports
+```
+
+## Life of a heartbeat (from M3)
 
 ```
 agent → POST /api/node/heartbeat
@@ -356,9 +443,12 @@ agent → hashes differ → GET /api/node/config?hash=cd34… → applies → re
 
 Heartbeats must be cheap. The plane does not write `last_seen` on every
 poll — only when it has moved meaningfully — because at fleet scale that
-is hundreds of writes a minute for no information gain.
+is hundreds of writes a minute for no information gain. Nothing above
+exists yet: M3 builds the agent and these endpoints; the columns they fill
+(`nodes.token_hash`, `applied_hash`, `last_seen`, ...) have been in the
+schema since M1.
 
-## Traffic stats
+## Traffic stats (from M7)
 
 Traffic counters come from Xray's own stats API, which keys them by client
 email: `user>>>alice@tokyo01-niigata>>>traffic>>>uplink`. This is the
@@ -399,6 +489,12 @@ leave everything else in the config untouched.
   view free and charges only for what is actually added.
 - **Why `db.py` is still one file.** It is the only file containing SQL, so
   the D1 port changed function bodies and nothing else.
+- **Why `xray_service` exists when AGENTS.md says the panel never manages
+  Xray.** It is the M1–M2 stopgap: through M2 the control plane is still
+  one process ("still one process" in the milestone), so the archived
+  panel's file-write + subprocess shell survives in a deliberately thin
+  form. Rendering lives in `render_service`, so M3 deletes the shell and
+  the sync calls without touching the pipeline.
 - **Why the async/sync split.** Pure computation has no I/O and stays
   synchronous and trivially testable. D1 has no synchronous API, so
   everything touching it is `async`. That line is the convention.

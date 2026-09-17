@@ -11,28 +11,33 @@ Run from the repo root with:
 """
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-import uvicorn
 from fastapi import FastAPI
 
 from db import SqliteConn
 from main import create_app
+from migrations import apply_migrations
 
 DB_PATH = "data/panel.db"
+# Resolved from this file, not the cwd, so tests and tools that launch
+# from any directory still build the same schema.
+MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Open the local SQLite database for the lifetime of the process.
+    """Open the local SQLite database and apply the schema migrations.
 
     Why a SqliteConn and not a raw connection: every db.py function awaits
     `conn.execute(...)`, so the local backend must satisfy the same async
     interface the D1 backend has. That symmetry is the M0 design finding
-    M4 will depend on. The spike table is created here because local
-    SQLite has no migration runner — D1 gets it from migrations/ instead.
+    M4 will depend on. The schema comes from migrations/*.sql (via
+    migrations.py), the same files wrangler feeds to D1 — one source of
+    truth, no drift.
     """
     conn = SqliteConn(DB_PATH)
-    await conn.execute("CREATE TABLE IF NOT EXISTS spike_kv (k TEXT PRIMARY KEY, v TEXT NOT NULL)")
+    await apply_migrations(conn, MIGRATIONS_DIR)
     app.state.conn = conn
     yield
     await conn.close()
@@ -43,7 +48,16 @@ app.router.lifespan_context = lifespan
 
 
 def main():
-    """Run under uvicorn with `src/` on sys.path, matching workerd's import root."""
+    """Run under uvicorn with `src/` on sys.path, matching workerd's import root.
+
+    Why uvicorn is imported here and not at module scope: uvicorn drags in
+    multiprocessing, whose import draws from the PRNG. Importing it only
+    when actually serving keeps `import local` (tests, the deploy-snapshot
+    check) free of any entropy draw, which is what the platform requires
+    of every module that ships.
+    """
+    import uvicorn
+
     uvicorn.run("local:app", host="127.0.0.1", port=8000, reload=True)
 
 

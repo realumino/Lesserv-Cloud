@@ -77,13 +77,14 @@ These were settled deliberately; do not relitigate them in passing.
 uv run pywrangler dev                              # the Worker + local D1, no CF account needed
 uv run uvicorn local:app --app-dir src --reload    # the same app for local tests/dev (SQLite, no D1)
 uv run python -m unittest discover -s tests -t . -v  # tests
-cd frontend && npm run dev                         # frontend, proxies /api -> the Worker
 npx wrangler d1 migrations apply lesserv --local   # dev database
 npx wrangler d1 migrations apply lesserv --remote  # production
 ```
 
-Two entrypoints, one app: `src/worker.py` (`asgi.entrypoint`, D1) and
-`src/local.py` (uvicorn + SQLite). The import root is `src/`, so imports
+There is no frontend in the repo yet — the SPA is rebuilt at M5
+(`PLAN.md`); until then `/api/admin/*` is the interface. Two entrypoints,
+one app: `src/worker.py` (`asgi.entrypoint`, D1) and `src/local.py`
+(uvicorn + SQLite). The import root is `src/`, so imports
 inside the app are flat (`from core.x25519 import ...`); uvicorn needs
 `--app-dir src` and tests get the same root from the shim in
 `tests/__init__.py`. Evidence and constraints from the M0 spike:

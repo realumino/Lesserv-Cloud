@@ -7,9 +7,6 @@
   // if packages misbehave, pin 3.13 by adding "python_workers_20250116".
   "compatibility_date": "2026-09-17",
   "compatibility_flags": ["python_workers"],
-  "vars": {
-    "SPIKE_MODE": "1"
-  },
   "d1_databases": [
     {
       "binding": "DB",

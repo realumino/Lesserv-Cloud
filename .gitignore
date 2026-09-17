@@ -12,6 +12,7 @@ node_modules/
 
 # local SQLite (dev only; production data lives in D1)
 data/*.db
+data/runtime/
 
 # frontend
 frontend/node_modules/

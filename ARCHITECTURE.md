@@ -74,6 +74,34 @@ requests flow **down only** (router → service → db, never reverse), and a
 module never knows about the layer above it. `db.py` has no idea HTTP
 exists; routers have no idea SQL exists.
 
+## Two entrypoints, one app
+
+The same `app` object (`src/main.py`) runs in two places, and that is a
+tested property, not an aspiration:
+
+```
+src/main.py      create_app() — routes only, imports nothing platform-specific
+src/local.py     imports app, attaches SQLite to app.state, serves via uvicorn
+src/worker.py    imports app, serves via workers.asgi (D1 arrives on the request scope)
+```
+
+The piece that makes one app serve both backends is the **conn
+interface**: `await conn.execute(sql, params) -> list[dict]`. Locally,
+`SqliteConn` wraps `sqlite3` (and commits, so tests see writes). On
+Workers, `D1Conn` wraps the D1 binding. Both live in `db.py`, and a
+request-scoped dependency (`db.get_conn`) picks one — from `app.state`
+locally, from `request.scope["env"].DB` inside workerd. Routers and
+services are identical in both runtimes; `tests/test_app.py` boots the
+Worker app under TestClient with the SQLite backend and would catch any
+drift.
+
+The import root is `src/` (the directory workerd treats as the module
+root), so application imports are flat: `from core.x25519 import ...`.
+uvicorn matches it with `--app-dir src`; tests get the same root from the
+shim in `tests/__init__.py`. The spike evidence behind these shapes —
+including the no-entropy-at-import rule for the deploy snapshot — is in
+`docs/M0-FINDINGS.md`.
+
 ## The render pipeline
 
 This is the heart of the control plane. Everything else exists to feed it

@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "lesserv-cloud",
+  "main": "src/worker.py",
+  // M0 spike: local dev only, no Cloudflare account involved yet.
+  // compatibility_date >= 2026-09-08 selects Python 3.14 via pywrangler;
+  // if packages misbehave, pin 3.13 by adding "python_workers_20250116".
+  "compatibility_date": "2026-09-17",
+  "compatibility_flags": ["python_workers"],
+  "vars": {
+    "SPIKE_MODE": "1"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "lesserv",
+      // Placeholder for --local development; replaced with a real id at M4 deploy.
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

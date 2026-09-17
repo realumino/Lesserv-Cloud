@@ -26,7 +26,17 @@ Nothing is stored in qualified form. The qualified names exist only in the
 rendered artifact and in generated share links, which is why renaming a
 node id is a single row update rather than a migration.
 
-## Current status: M0 not started
+## Current status: M0 complete — platform viable
+
+M0's verdict: **go**. The same FastAPI `app` object runs under uvicorn
+locally and inside a Worker; the pure core (x25519, allocator) passes the
+RFC 7748 vectors unmodified under Pyodide; a D1 row and an AES-GCM
+ciphertext both round-trip through `db.py`; the TestClient suite passes
+locally (21/21). The binding constraints discovered (no entropy at
+import time, `src/` as import root, async-everywhere `db.py`) live in
+[`docs/M0-FINDINGS.md`](docs/M0-FINDINGS.md) and are already encoded in
+the scaffold and its tests. M0 ran local-only (`pywrangler dev` + local
+D1, no Cloudflare account), per the rule below.
 
 M0–M3 involve zero Cloudflare: the render pipeline and the agent protocol
 are built and debugged locally first, on the one VPS available. The
@@ -35,7 +45,7 @@ so that it re-platforms something already proven.
 
 | # | Milestone | Status |
 |---|-----------|--------|
-| 0 | Spike: platform viability | not started |
+| 0 | Spike: platform viability | done |
 | 1 | Scaffold + node-scoped data model (one node, SQLite) | not started |
 | 2 | Qualifier + link profiles | not started |
 | 3 | The agent, split out (systemd, pull over localhost) | not started |

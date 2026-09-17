@@ -74,13 +74,20 @@ These were settled deliberately; do not relitigate them in passing.
 ## Run it
 
 ```
-uv run pywrangler dev                 # the Worker + local D1, no CF account needed
-uvicorn src.main:app --reload         # the same app for local tests/dev (no D1)
-python -m unittest discover tests -v  # tests
-cd frontend && npm run dev            # frontend, proxies /api -> the Worker
-wrangler d1 migrations apply lesserv --local    # dev database
-wrangler d1 migrations apply lesserv --remote   # production
+uv run pywrangler dev                              # the Worker + local D1, no CF account needed
+uv run uvicorn local:app --app-dir src --reload    # the same app for local tests/dev (SQLite, no D1)
+uv run python -m unittest discover -s tests -t . -v  # tests
+cd frontend && npm run dev                         # frontend, proxies /api -> the Worker
+npx wrangler d1 migrations apply lesserv --local   # dev database
+npx wrangler d1 migrations apply lesserv --remote  # production
 ```
+
+Two entrypoints, one app: `src/worker.py` (`asgi.entrypoint`, D1) and
+`src/local.py` (uvicorn + SQLite). The import root is `src/`, so imports
+inside the app are flat (`from core.x25519 import ...`); uvicorn needs
+`--app-dir src` and tests get the same root from the shim in
+`tests/__init__.py`. Evidence and constraints from the M0 spike:
+`docs/M0-FINDINGS.md`.
 
 ## Conventions (user requirement — non-negotiable)
 
@@ -99,10 +106,22 @@ wrangler d1 migrations apply lesserv --remote   # production
   synchronous Python — they compute dicts. Anything touching D1 is `async`
   and must be awaited: D1 has no synchronous API, so every router and
   service that reads or writes is `async def`. That asymmetry is the
-  convention, not an accident.
-- **Workers have no filesystem, no subprocess, and no `sqlite3` module.**
+  convention, not an accident. (M0 made it concrete: the local
+  `SqliteConn` satisfies the same awaited `execute()` interface, so
+  `db.py` signatures survive the D1 port unchanged.)
+- **No entropy at import time.** Cloudflare poisons the PRNG before the
+  deploy-time memory snapshot; `os.urandom`/`uuid4` in top-level scope
+  fails the deploy. Key generation and UUID minting happen inside request
+  handlers only — `tests/test_import_hygiene.py` enforces it.
+- **FFI conversions are explicit.** `bytes` needs an explicit
+  `Uint8Array`, and lists passed to WebCrypto (e.g. `keyUsages`) must be
+  real JS Arrays via `to_js`. Keep `from js import ...` inside functions:
+  under CPython that import raises, and only `crypto.py` may touch it.
+- **Workers have no filesystem that persists, and no subprocess.**
   `db.py` is the only file containing SQL, and it talks to D1 through
-  bindings. The archived panel's `xray_service.py` has no counterpart here —
+  bindings (`import sqlite3` itself works under Pyodide, but a SQLite
+  file there is useless — the filesystem is ephemeral and per-isolate).
+  The archived panel's `xray_service.py` has no counterpart here —
   process management is entirely the agent's job.
 - **The same `app` object must run under both uvicorn and Workers.** If
   something only works in one of them, it's a bug in the app, not a

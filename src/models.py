@@ -275,3 +275,93 @@ class UserLinksOut(BaseModel):
     username: str
     links: list[ShareLink]
     warnings: list[str]
+
+
+class TokenOut(BaseModel):
+    """Response for POST /api/admin/nodes/{node_id}/token.
+
+    Why the plaintext appears here and nowhere else: it is shown once at
+    mint time; afterwards only its hash exists in the database.
+    """
+
+    node_id: str
+    token: str
+    created_at: int
+
+
+class EnrollIn(BaseModel):
+    """Request body for POST /api/node/enroll (PROTOCOL.md, protocol 1)."""
+
+    protocol: int
+    agent_version: str = ""
+    xray_version: str = ""
+    platform: str = ""
+    detected_ip: str | None = None
+
+
+class HeartbeatIn(BaseModel):
+    """Request body for POST /api/node/heartbeat (PROTOCOL.md, protocol 1).
+
+    Why every fact but `protocol` is optional: the heartbeat must stay
+    cheap and forward-compatible — a missing field means "no report",
+    never a failure. The plane only stores versions + applied hash;
+    running state is liveness context for this request alone.
+    """
+
+    protocol: int
+    applied_hash: str | None = None
+    applied_at: int | None = None
+    xray_running: bool = False
+    xray_pid: int | None = None
+    agent_uptime: int | None = None
+    last_error: str | None = None
+
+
+class ReportIn(BaseModel):
+    """Request body for POST /api/node/report (PROTOCOL.md, protocol 1)."""
+
+    protocol: int
+    hash: str
+    ok: bool
+    stage: Literal["fetched", "test", "applied", "started", "rolled_back"]
+    xray_exit_code: int | None = None
+    error: str | None = None
+
+
+class StatsIn(BaseModel):
+    """Request body for POST /api/node/stats (PROTOCOL.md, protocol 1).
+
+    Why validated then discarded in M3: the agent ships absolute counters
+    from v1 so history can accumulate, but accumulation (`node_stats`,
+    M7) does not exist yet. Accepting the shape now keeps the agent
+    releasable without pretending to store anything.
+    """
+
+    protocol: int
+    boot_id: str
+    counters: dict[str, StrictInt] = {}
+
+    @field_validator("counters")
+    @classmethod
+    def counters_are_non_negative(cls, value):
+        """Reject negatives (strict ints already exclude bools and text)."""
+        for key, item in value.items():
+            if item < 0:
+                raise ValueError(f"counter '{key}' must be non-negative")
+        return value
+
+
+class NodeSyncOut(BaseModel):
+    """Response for GET /api/admin/nodes/{node_id}/sync: drift at a glance."""
+
+    node_id: str
+    state: Literal["pending", "active"]
+    desired_hash: str | None
+    applied_hash: str | None
+    in_sync: bool
+    last_seen: int | None
+    health: str | None
+    agent_version: str | None
+    xray_version: str | None
+    last_error: str | None
+    warnings: list[str]

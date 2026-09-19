@@ -5,7 +5,6 @@ Run from the repo root:
 """
 
 import unittest
-from unittest import mock
 
 from fastapi import HTTPException
 
@@ -40,9 +39,6 @@ class TestRealityRouter(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.conn, self.path = open_fresh_db_sync()
         self.addCleanup(cleanup_db, self.conn, self.path)
-        patcher = mock.patch.object(admin_reality.xray_service, "sync_node")
-        patcher.start()
-        self.addCleanup(patcher.stop)
 
     async def _seed(self, node_id="tokyo01", config=_reality_config()):
         """Create the node and paste its config directly."""

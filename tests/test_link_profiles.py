@@ -1,17 +1,15 @@
 """Tests for the link-profile admin API.
 
 Why TestClient: profiles are validated HTTP resources with their own
-identity, status codes, and side-effect contract. The database is a
-throwaway; render-sync mocking proves profile writes never touch the local
-runtime pipeline.
+identity and status codes. The database is a throwaway; profiles are
+client-side only and never touch any render path (M3 removed the last
+one).
 """
 
 import unittest
-from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from services import xray_service
 from tests.support import cleanup_db, make_test_app, open_fresh_db_sync
 
 
@@ -52,9 +50,6 @@ class AdminLinkProfileApi(unittest.TestCase):
     def setUp(self):
         self.conn, self.path = open_fresh_db_sync()
         self.addCleanup(cleanup_db, self.conn, self.path)
-        sync_patch = mock.patch.object(xray_service, "sync_node")
-        self.sync_mock = sync_patch.start()
-        self.addCleanup(sync_patch.stop)
         self.client = TestClient(make_test_app(self.conn))
         response = self.client.post("/api/admin/nodes", json={
             "id": "tokyo01", "label": "Tokyo 01", "address": "funky.example.com",
@@ -62,7 +57,6 @@ class AdminLinkProfileApi(unittest.TestCase):
         assert response.status_code == 201, response.text
         put = self.client.put("/api/admin/nodes/tokyo01/config", json=_config())
         assert put.status_code == 200, put.text
-        self.sync_mock.reset_mock()
 
     def test_create_get_update_delete_roundtrip(self):
         created = self.client.post(
@@ -91,14 +85,17 @@ class AdminLinkProfileApi(unittest.TestCase):
             404,
         )
 
-    def test_profile_writes_never_sync_the_runtime(self):
+    def test_profile_writes_are_client_side_only(self):
+        """Profile CRUD changes links, never renders or node state."""
         self.client.post("/api/admin/nodes/tokyo01/link-profiles", json=_profile())
         self.client.put(
             "/api/admin/nodes/tokyo01/link-profiles/cdn", json={"label": "CDN Edge"}
         )
         self.client.delete("/api/admin/nodes/tokyo01/link-profiles/cdn")
 
-        self.sync_mock.assert_not_called()
+        sync = self.client.get("/api/admin/nodes/tokyo01/sync").json()
+        self.assertIsNone(sync["applied_hash"])
+        self.assertIsNone(sync["last_seen"])
 
     def test_duplicate_unknown_and_missing_profiles(self):
         self.client.post("/api/admin/nodes/tokyo01/link-profiles", json=_profile())

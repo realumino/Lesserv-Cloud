@@ -2,10 +2,8 @@
 
 Why this layer exists: routers do HTTP, db.py does SQL; the rules — how
 uuids are minted per (user, node, exit), what an access update means —
-live here. After every successful mutation this module syncs the affected
-nodes so the local runtime matches the database. That sync is the
-archived panel's single-node behavior; M3 removes it (step 3 of
-"Life of a change" becomes empty) and the pull protocol replaces it.
+live here. Mutations only write rows: each node's agent picks the new
+render up on its next heartbeat (content-hash convergence, M3).
 """
 
 import time
@@ -13,7 +11,6 @@ import uuid
 
 import db
 from models import UserCreate, UserUpdate
-from services import xray_service
 
 
 def ensure_uuids(outbound_tags, uuids) -> dict:
@@ -84,10 +81,8 @@ async def create_user(conn, data: UserCreate) -> dict:
     """Turn a UserCreate payload into a user row plus per-node access rows.
 
     Why the service fills uuids and created_at: they are server-generated
-    facts, not client choices. After storing, the affected nodes are
-    synced — the same "database changed, runtime must react" choke point
-    the archived panel had. A user created with no access syncs nothing:
-    a no-op mutation must not bounce Xray.
+    facts, not client choices. Nothing is pushed after storing — the
+    affected nodes converge on their next heartbeat.
     """
     await db.create_user(conn, {
         "username": data.username,
@@ -97,8 +92,6 @@ async def create_user(conn, data: UserCreate) -> dict:
         "created_at": int(time.time()),
     })
     await _write_access(conn, data.username, data.access)
-    if data.access:
-        await xray_service.sync_nodes(conn, sorted(data.access))
     return await get_user_with_access(conn, data.username)
 
 
@@ -128,7 +121,6 @@ async def update_user(conn, username, data: UserUpdate) -> dict | None:
         for node_id in sorted(old_nodes - set(data.access)):
             await db.delete_access(conn, username, node_id)
         await _write_access(conn, username, data.access)
-        await xray_service.sync_nodes(conn, sorted(old_nodes | set(data.access)))
     return await get_user_with_access(conn, username)
 
 
@@ -137,14 +129,10 @@ async def delete_user(conn, username) -> bool:
 
     Why the existence check comes first: the conn interface returns rows,
     not rowcounts, so "did anything get deleted" must be observed before
-    deleting; and a 404 must not bounce Xray (no sync on a no-op).
+    deleting; and a 404 must not touch anything else.
     """
     existing = await db.get_user(conn, username)
     if existing is None:
         return False
-    affected = [
-        row["node_id"] for row in await db.list_access_for_user(conn, username)
-    ]
     await db.delete_user(conn, username)
-    await xray_service.sync_nodes(conn, sorted(affected))
     return True

@@ -2,19 +2,14 @@
 
 Why TestClient: these endpoints are thin HTTP over the services, so the
 interesting assertions are status codes and shapes — exactly what an HTTP
-test pins. The database and the runtime dir are throwaways; restart is
-mocked so no subprocess is involved.
+test pins. The database is a throwaway; nothing is pushed anywhere (M3):
+agents converge on their next heartbeat.
 """
 
-import shutil
-import tempfile
 import unittest
-from unittest import mock
 
 from fastapi.testclient import TestClient
 
-import settings
-from services import xray_service
 from tests.support import cleanup_db, make_test_app, open_fresh_db_sync
 
 
@@ -39,14 +34,6 @@ class AdminNodeApi(unittest.TestCase):
     def setUp(self):
         self.conn, self.path = open_fresh_db_sync()
         self.addCleanup(cleanup_db, self.conn, self.path)
-        self.tmpdir = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, self.tmpdir, ignore_errors=True)
-        runtime_patch = mock.patch.object(settings, "RUNTIME_DIR", self.tmpdir)
-        runtime_patch.start()
-        self.addCleanup(runtime_patch.stop)
-        restart_patch = mock.patch.object(xray_service, "restart")
-        restart_patch.start()
-        self.addCleanup(restart_patch.stop)
         self.client = TestClient(make_test_app(self.conn))
 
     def _create_node(self, node_id="tokyo01", address="funky.example.com"):
@@ -99,7 +86,8 @@ class AdminNodeApi(unittest.TestCase):
         runtime = self.client.get("/api/admin/nodes/tokyo01/config/runtime")
         self.assertEqual(runtime.status_code, 200)
         self.assertIn("inbounds", runtime.json()["config"])
-        self.assertIsInstance(runtime.json()["generated_at"], int)
+        self.assertTrue(runtime.json()["hash"])
+        self.assertIsInstance(runtime.json()["warnings"], list)
         self.assertTrue(
             self.client.get("/api/admin/nodes/tokyo01").json()["has_config"]
         )
@@ -150,7 +138,7 @@ class AdminNodeApi(unittest.TestCase):
             outbounds, [{"tag": "niigata", "protocol": "freedom"}]
         )
 
-    def test_status_counts_and_local_xray(self):
+    def test_status_counts_nodes_and_users(self):
         self._create_node()
         self.client.post("/api/admin/users", json={
             "username": "alice",
@@ -159,10 +147,7 @@ class AdminNodeApi(unittest.TestCase):
 
         status = self.client.get("/api/admin/status").json()
 
-        self.assertEqual(status["node_count"], 1)
-        self.assertEqual(status["user_count"], 1)
-        self.assertFalse(status["xray_running"])
-        self.assertIsNone(status["xray_pid"])
+        self.assertEqual(status, {"node_count": 1, "user_count": 1})
 
 
 if __name__ == "__main__":

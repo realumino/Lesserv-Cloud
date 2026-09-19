@@ -1,7 +1,6 @@
-"""Tests for the node service: creation facts, config save, sync triggers."""
+"""Tests for the node service: creation facts and config save."""
 
 import unittest
-from unittest import mock
 
 from models import NodeCreate, NodeUpdate
 from services import node_service
@@ -14,12 +13,6 @@ class TestNodeService(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.conn, self.path = open_fresh_db_sync()
         self.addCleanup(cleanup_db, self.conn, self.path)
-        # Patch through the module object the service actually calls, not
-        # a string target: string targets re-import and can miss the code
-        # under test if module identity ever changes between tests.
-        patcher = mock.patch.object(node_service.xray_service, "sync_node")
-        self.sync_mock = patcher.start()
-        self.addCleanup(patcher.stop)
 
     async def test_create_stamps_created_at_and_has_no_config(self):
         node = await node_service.create_node(
@@ -42,14 +35,13 @@ class TestNodeService(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(node["label"], "new")
         self.assertEqual(node["address"], "a")
-        self.sync_mock.assert_not_called()
 
     async def test_update_missing_node_returns_none(self):
         self.assertIsNone(
             await node_service.update_node(self.conn, "ghost", NodeUpdate(label="x"))
         )
 
-    async def test_save_config_stores_blob_and_syncs(self):
+    async def test_save_config_stores_blob(self):
         await node_service.create_node(
             self.conn, NodeCreate(id="tokyo01", label="n")
         )
@@ -62,16 +54,14 @@ class TestNodeService(unittest.IsolatedAsyncioTestCase):
 
         node = await node_service.get_node_out(self.conn, "tokyo01")
         self.assertTrue(node["has_config"])
-        self.sync_mock.assert_called_once_with(self.conn, "tokyo01")
 
-    async def test_save_config_missing_node_returns_missing_and_never_syncs(self):
+    async def test_save_config_missing_node_returns_missing(self):
         self.assertEqual(
             await node_service.save_config(self.conn, "ghost", {}),
             (False, []),
         )
-        self.sync_mock.assert_not_called()
 
-    async def test_save_config_rejects_qualified_tags_without_saving_or_syncing(self):
+    async def test_save_config_rejects_qualified_tags_without_saving(self):
         await node_service.create_node(
             self.conn, NodeCreate(id="tokyo01", label="n")
         )
@@ -85,7 +75,6 @@ class TestNodeService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(errors), 1)
         node = await node_service.get_node_out(self.conn, "tokyo01")
         self.assertFalse(node["has_config"])
-        self.sync_mock.assert_not_called()
 
 
 if __name__ == "__main__":

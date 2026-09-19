@@ -37,7 +37,10 @@ _POISON_IMPORT = textwrap.dedent(
     import services.labels  # noqa: F401
     import services.link_profile_service  # noqa: F401
     import services.link_service  # noqa: F401
+    import services.node_state_service  # noqa: F401
+    import services.node_token_service  # noqa: F401
     import services.qualify_service  # noqa: F401
+    import routers.node  # noqa: F401
     print("clean")
     """
 )

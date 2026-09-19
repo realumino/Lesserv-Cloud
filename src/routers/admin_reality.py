@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 import db
 from routers.deps import conn
-from services import config_service, reality_service, xray_service
+from services import config_service, reality_service
 
 router = APIRouter(prefix="/api/admin", tags=["admin-reality"])
 
@@ -42,11 +42,11 @@ async def get_reality_keys(node_id: str, conn=Depends(conn)):
 
 @router.post("/nodes/{node_id}/reality/rotate")
 async def rotate_all_keys(node_id: str, conn=Depends(conn)):
-    """Rotate the key of every REALITY inbound and re-render the runtime.
+    """Rotate the key of every REALITY inbound.
 
     Why one call for all: replacing the whole key set is the operator's
-    "start over" action; one request means one consistent re-render
-    instead of one per inbound.
+    "start over" action. Nodes pick the new keys up on their next
+    heartbeat — rotation never pushes.
     """
     config = await _reality_config_or_404(conn, node_id)
     tags = config_service.reality_inbound_tags(config)
@@ -56,13 +56,12 @@ async def rotate_all_keys(node_id: str, conn=Depends(conn)):
         )
     for tag in tags:
         await reality_service.rotate_key(conn, node_id, tag)
-    await xray_service.sync_node(conn, node_id)
     return {"rotated": tags}
 
 
 @router.post("/nodes/{node_id}/reality/{tag}/rotate")
 async def rotate_key(node_id: str, tag: str, conn=Depends(conn)):
-    """Rotate one REALITY inbound's key and re-render the runtime.
+    """Rotate one REALITY inbound's key.
 
     Why 404 for a non-REALITY tag: rotating a key that Xray never reads
     would silently do nothing — the operator must learn the tag does not
@@ -74,7 +73,6 @@ async def rotate_key(node_id: str, tag: str, conn=Depends(conn)):
             status_code=404, detail=f"no REALITY inbound tagged '{tag}'"
         )
     await reality_service.rotate_key(conn, node_id, tag)
-    await xray_service.sync_node(conn, node_id)
     return {
         "inbound": tag,
         "public_key": await reality_service.public_key(conn, node_id, tag),

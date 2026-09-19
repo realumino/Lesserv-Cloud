@@ -187,6 +187,39 @@ async def set_node_config(conn, node_id, config):
     )
 
 
+async def set_token_hash(conn, node_id, token_hash):
+    """Store one node's bearer-token hash, replacing any previous one.
+
+    Why a replace and not a history: rotation invalidates immediately
+    (M3 decision) — the old hash dies the moment the new one is stored,
+    so there is exactly one valid token per node at any time.
+    """
+    await conn.execute(
+        "UPDATE nodes SET token_hash = ? WHERE id = ?", (token_hash, node_id)
+    )
+
+
+async def touch_node(conn, node_id, last_seen, health, agent_version,
+                     xray_version, last_error, applied_hash):
+    """Overwrite one node's agent-reported liveness columns in one statement.
+
+    Why one fixed statement: the service layer computes the complete
+    desired values first (including the heartbeat cheap-write decision),
+    so the SQL never needs a dynamic column list — same reasoning as
+    `replace_user`. `last_seen` NULL means "never contacted" (pending).
+    """
+    await conn.execute(
+        """
+        UPDATE nodes
+        SET last_seen = ?, health = ?, agent_version = ?,
+            xray_version = ?, last_error = ?, applied_hash = ?
+        WHERE id = ?
+        """,
+        (last_seen, health, agent_version, xray_version,
+         last_error, applied_hash, node_id),
+    )
+
+
 async def list_users(conn) -> list[dict]:
     """Return every user's global row, username-ordered."""
     rows = await conn.execute("SELECT * FROM users ORDER BY username")

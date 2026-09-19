@@ -26,7 +26,7 @@ Nothing is stored in qualified form. The qualified names exist only in the
 rendered artifact and in generated share links, which is why renaming a
 node id is a single row update rather than a migration.
 
-## Current status: M2 complete — qualifier + link profiles
+## Current status: M3 complete — the agent, split out
 
 M1 recreated the archived panel's behavior with the `node` dimension
 wired in from the start: configs, REALITY keys, and per-user access are
@@ -40,7 +40,13 @@ tags at render and link-generation time, added per-inbound link profiles
 and readable link labels, rejected pre-qualified tags at paste time, and
 left `build_config` and `apply_reality_keys` unchanged. 172 tests pass
 locally (SQLite backend). The executable plan and its decisions live in
-[`docs/M2-PLAN.md`](docs/M2-PLAN.md). M0 ran local-only
+[`docs/M2-PLAN.md`](docs/M2-PLAN.md). M3 split the processes: the plane
+serves `protocol: 1` (`enroll`, `heartbeat`, `config`, `report`, `stats`),
+mints per-node bearer tokens, shows drift on `GET .../sync`, and manages
+no Xray — `xray_service.py` and `settings.py` are deleted, the runtime
+pane is a live render, and user edits converge on next heartbeat with no
+push. 194 tests pass locally (SQLite backend). The executable plan and
+its decisions live in [`docs/M3-PLAN.md`](docs/M3-PLAN.md). M0 ran local-only
 (`pywrangler dev` + local D1, no Cloudflare account), per the rule below.
 
 M0–M3 involve zero Cloudflare: the render pipeline and the agent protocol
@@ -53,7 +59,7 @@ so that it re-platforms something already proven.
 | 0 | Spike: platform viability | done |
 | 1 | Scaffold + node-scoped data model (one node, SQLite) | done |
 | 2 | Qualifier + link profiles | done |
-| 3 | The agent, split out (systemd, pull over localhost) | not started |
+| 3 | The agent, split out (systemd, pull over localhost) | done |
 | 4 | Control plane on Workers + D1 | not started |
 | 5 | Node #2 + the new frontend | not started |
 | 6 | Subscriptions | not started |
@@ -130,6 +136,21 @@ that passes the test but kills Xray on start triggers a rollback to
 last-good plus an error report; killing the agent mid-apply and restarting
 it converges; and a broken live config at agent startup is detected and
 replaced from last-good.
+
+Complete: the plane serves `protocol: 1` with node-vs-node isolation
+tested, heartbeat writes are conditional (>60s stale or changed facts),
+reports adopt the hash only on `applied`/`started` success, `stats` is
+accepted and counted but not stored (M7), and the stopgap is deleted —
+no sync calls, no runtime files, no local Xray. Agent-side crash safety
+(A2–A3 apply sequence) is proven live, not just at contract level:
+`Lesserv-Agent/tests/test_e2e_pull.py` runs the real agent loop against
+a real local plane (convergence, rejection with live untouched, rollback
+to last-good, kill-mid-apply, startup repair, stats path, auth failure).
+That E2E caught one real bug: the first draft returned `304` for the
+exact fetch the agent legitimately makes, so the contract is now 200 on
+match/omitted and 409 with `desired_hash` on mismatch, with agent-side
+hash verification (`docs/PROTOCOL.md`). The executable record is in
+[`docs/M3-PLAN.md`](docs/M3-PLAN.md).
 
 ### M4 — Control plane on Workers + D1
 

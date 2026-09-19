@@ -1,16 +1,17 @@
-"""Business rules for nodes: creation facts, config storage, sync triggers.
+"""Business rules for nodes: creation facts and config storage.
 
 Why this layer exists: nodes are the new dimension of the fleet model.
 Their rules are thin (the server stamps created_at, the config blob is
 opaque) but they belong here, not in the router — same split as the
 archived panel: routers do HTTP, services hold rules, db holds SQL.
+Nothing is pushed after a write; agents converge on next heartbeat (M3).
 """
 
 import time
 
 import db
 from models import NodeCreate, NodeUpdate
-from services import qualify_service, xray_service
+from services import qualify_service
 
 
 def _to_out(node: dict) -> dict:
@@ -29,7 +30,12 @@ def _to_out(node: dict) -> dict:
 
 
 async def create_node(conn, data: NodeCreate) -> dict:
-    """Create a node row; no config and no token yet (M3 mints tokens)."""
+    """Create a node row; no config and no token yet.
+
+    Why no token: the bearer token is minted separately (POST
+    .../token) so creation and credential issuance stay distinct
+    operator actions — the plaintext is shown once at mint time.
+    """
     await db.create_node(conn, {
         "id": data.id,
         "label": data.label,
@@ -69,13 +75,14 @@ async def list_nodes_out(conn) -> list[dict]:
 
 
 async def save_config(conn, node_id, payload) -> tuple[bool, list[str]]:
-    """Replace a node's opaque config and sync it, when its tags are valid.
+    """Replace a node's opaque config, when its tags are valid.
 
     Why the dict is stored untouched: the config is opaque — the plane
     never validates or interprets its structure, except for tag-name
     validation at paste time. The tuple separates a missing node from an
     invalid payload: `(False, [])` means 404, `(True, errors)` means 422,
-    and `(True, [])` means the config was saved and synced.
+    and `(True, [])` means the config was saved. Nothing is pushed: each
+    node's agent picks the new render up on its next heartbeat (M3).
     """
     node = await db.get_node(conn, node_id)
     if node is None:
@@ -84,5 +91,4 @@ async def save_config(conn, node_id, payload) -> tuple[bool, list[str]]:
     if errors:
         return True, errors
     await db.set_node_config(conn, node_id, payload)
-    await xray_service.sync_node(conn, node_id)
     return True, []

@@ -153,13 +153,22 @@ Returns the fully rendered runtime config for this node, already qualified,
 already containing clients and routing rules, with the REALITY private keys
 injected.
 
-- `200` with the config when the hash is not current.
-- `304` when it is, so a poll after a failed apply does not re-download.
+- `200` with `{hash, config}` when the URL hash matches the desired hash
+  (the normal fetch), or when no `hash` is given.
+- `409` with `{detail, desired_hash}` when the URL hash no longer matches:
+  the plane moved on between the agent's heartbeat and its fetch, so the
+  agent re-heartbeats instead of applying bytes it did not ask for.
+- `404` when the node has nothing renderable.
 
 The hash in the URL is a guard against stale reads, not a security
-mechanism. The response is the exact bytes the node should run; the agent
-does not transform it, does not merge it, and does not validate its
-semantics beyond `xray -test`.
+mechanism — and the `hash` in the response is the other half: the agent
+verifies the returned hash equals the one it asked for before touching
+disk. There is deliberately no `304`: without an agent-side cache of
+fetched bytes a "not modified" answer can only strand the agent (it
+needs the bytes precisely when it asks), and configs are kilobytes
+fetched solely on change. The response is the exact bytes the node should
+run; the agent does not transform it, does not merge it, and does not
+validate its semantics beyond `xray -test`.
 
 ### `POST /api/node/report`
 

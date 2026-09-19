@@ -6,15 +6,10 @@ The archived links endpoint's single-node codes carry over; the links now
 aggregate across nodes.
 """
 
-import shutil
-import tempfile
 import unittest
-from unittest import mock
 
 from fastapi.testclient import TestClient
 
-import settings
-from services import xray_service
 from tests.support import cleanup_db, make_test_app, open_fresh_db_sync
 
 
@@ -49,14 +44,6 @@ class AdminUserApi(unittest.TestCase):
     def setUp(self):
         self.conn, self.path = open_fresh_db_sync()
         self.addCleanup(cleanup_db, self.conn, self.path)
-        self.tmpdir = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, self.tmpdir, ignore_errors=True)
-        runtime_patch = mock.patch.object(settings, "RUNTIME_DIR", self.tmpdir)
-        runtime_patch.start()
-        self.addCleanup(runtime_patch.stop)
-        restart_patch = mock.patch.object(xray_service, "restart")
-        restart_patch.start()
-        self.addCleanup(restart_patch.stop)
         self.client = TestClient(make_test_app(self.conn))
 
     def _make_node(self, node_id="tokyo01", address="funky.example.com", config=None):
@@ -134,9 +121,13 @@ class AdminUserApi(unittest.TestCase):
         self.assertEqual(set(user["access"]), {"toyama01"})
 
     def test_links_build_reality_uri_from_node_address_and_stored_key(self):
-        """The whole chain: config pasted, key ensured, pbk derived."""
+        """The whole chain: config pasted, key ensured at render, pbk derived."""
         self._make_node(config=_config())
         self._make_user()
+        # Keys are minted by the render choke point (first heartbeat or
+        # pane view), never by pasting or by link generation itself.
+        runtime = self.client.get("/api/admin/nodes/tokyo01/config/runtime")
+        assert runtime.status_code == 200, runtime.text
 
         response = self.client.get("/api/admin/users/alice/links")
 

@@ -143,10 +143,9 @@ qualify_service.qualify_config / qualify_users / qualify_keys
       │  apply_reality_keys      │  fills clients, appends routing
       │                          │  rules, injects keys
       └──────────────────────────┘
-      ▼
+       ▼
 rendered runtime config  →  config_hash (canonical JSON, sha256)
-                         →  written to data/runtime/{node}.json
-                         →  local Xray restarted (M1–M2 stopgap)
+                         →  served to the node's agent on pull (M3)
 ```
 
 Three properties matter more than the individual steps:
@@ -238,13 +237,15 @@ Notes worth keeping in mind:
 
 - **The config lives in the database, not in a file.** `nodes.config_json`
   stores the admin's pasted JSON verbatim — the plane never interprets it
-  beyond tag-name validation at paste time. The only file artifact
-  is the rendered runtime config the local stopgap Xray reads
-  (`data/runtime/{node_id}.json`).
-- **Agent-facing columns exist from day one.** `token_hash`,
+  beyond tag-name validation at paste time. The rendered runtime config
+  is computed on demand (heartbeat, config fetch, runtime pane, sync
+  view) and never written to disk — the M1–M2 `data/runtime/{node_id}.json`
+  files left with the stopgap.
+- **Agent-facing columns were filled by M3.** `token_hash`,
   `applied_hash`, `last_seen`, `health`, `agent_version`, `xray_version`,
-  `last_error` sit in `nodes` waiting for M3; a migration at M3 would be
-  one line, but the locked data model has them now.
+  `last_error` sat in `nodes` since M1 as part of the locked data model;
+  the token mint plus the enroll/heartbeat/report endpoints write them.
+  No M3 migration was needed — exactly as planned.
 - **`user_node_access` is the Option B model.** Membership is a stored row
   rather than something inferred from whether a user's tag strings happen
   to exist in some node's config. This is what makes "who can use node X?"
@@ -294,7 +295,8 @@ pre-M4 admin surface is therefore unauthenticated by design: on a dev
 machine `localhost` is the boundary, and the fail-closed check is about
 *paths*, not identity.
 
-**Node.** 32 random bytes, base64url, shown once at creation and stored
+**Node.** 32 random bytes, base64url, minted via
+`POST /api/admin/nodes/{id}/token`, shown once at creation and stored
 only as a hash. Hashed rather than encrypted for the same reason API keys
 are hashed generally: it is high-entropy random, so it cannot be brute
 forced and never needs to be read back. Note this is the opposite of
@@ -402,25 +404,19 @@ side, and an empty response tells the client nothing new.
 2. The router validates the payload and calls the user service, which
    writes `users` and the `user_node_access` rows and runs `ensure_uuids`
    per node — existing pairs keep their UUID, new pairs get one.
-3. **M1–M2 stopgap:** the service syncs every affected node locally —
-   render, write the runtime file, bounce the local Xray process, exactly
-   like the archived panel. **From M3 this step is empty**; the sync calls
-   are the archived single-node behavior and the agent split deletes them.
-4. Nothing is pushed. There is no fan-out, because there is nothing to
+3. Nothing is pushed. There is no fan-out, because there is nothing to
    fan out: the plane does not track a version per node.
-5. From M3: on each node's next heartbeat, the plane renders that node's
+4. On each node's next heartbeat, the plane renders that node's
    desired state, hashes it (`config_hash` — included and tested since
    M1), and compares it to the hash the node reported. A node whose
    authorized user set changed now has a different hash.
-6. From M3: that node's agent fetches the new config, tests it, snapshots
+5. That node's agent fetches the new config, tests it, snapshots
    the old one, swaps it in, restarts Xray, and reports the applied hash.
    The fleet view stops showing that node as drifted.
 
-The important property: **step 4 is empty.** Content-hash convergence means
+The important property: **step 3 is empty.** Content-hash convergence means
 a user edit does not have to know which nodes are affected, which is what
-removes an entire class of ordering and fan-out bugs. (In M1 the affected
-set is still computed — to drive the stopgap sync — but the *render* never
-needs it, and M3 deletes the computation with the sync.)
+removes an entire class of ordering and fan-out bugs.
 
 ```
 agent → POST /api/node/heartbeat
@@ -434,7 +430,7 @@ plane → looks up the node by id, compares the token hash,
 agent → hashes differ → GET /api/node/config?hash=cd34… → applies → reports
 ```
 
-## Life of a heartbeat (from M3)
+## Life of a heartbeat
 
 ```
 agent → POST /api/node/heartbeat
@@ -448,12 +444,12 @@ plane → looks up the node by id, compares the token hash,
 agent → hashes differ → GET /api/node/config?hash=cd34… → applies → reports
 ```
 
-Heartbeats must be cheap. The plane does not write `last_seen` on every
-poll — only when it has moved meaningfully — because at fleet scale that
-is hundreds of writes a minute for no information gain. Nothing above
-exists yet: M3 builds the agent and these endpoints; the columns they fill
-(`nodes.token_hash`, `applied_hash`, `last_seen`, ...) have been in the
-schema since M1.
+Heartbeats are cheap. The plane does not write `last_seen` on every
+poll — only when liveness went stale (>60s) or a reported fact changed —
+because at fleet scale that is hundreds of writes a minute for no
+information gain. The agent and these endpoints landed in M3; the columns
+they fill (`nodes.token_hash`, `applied_hash`, `last_seen`, ...) have been
+in the schema since M1.
 
 ## Traffic stats (from M7)
 
@@ -496,12 +492,12 @@ leave everything else in the config untouched.
   view free and charges only for what is actually added.
 - **Why `db.py` is still one file.** It is the only file containing SQL, so
   the D1 port changed function bodies and nothing else.
-- **Why `xray_service` exists when AGENTS.md says the panel never manages
-  Xray.** It is the M1–M2 stopgap: through M2 the control plane is still
-  one process ("still one process" in the milestone), so the archived
-  panel's file-write + subprocess shell survives in a deliberately thin
-  form. Rendering lives in `render_service`, so M3 deletes the shell and
-  the sync calls without touching the pipeline.
+- **Why `xray_service` is gone when the code once managed Xray.** It was
+  the M1–M2 stopgap: through M2 the control plane was still one process
+  ("still one process" in the milestone), so the archived panel's
+  file-write + subprocess shell survived in a deliberately thin form.
+  Rendering lived in `render_service`, so M3 deleted the shell and the
+  sync calls without touching the pipeline — `settings.py` went with it.
 - **Why the async/sync split.** Pure computation has no I/O and stays
   synchronous and trivially testable. D1 has no synchronous API, so
   everything touching it is `async`. That line is the convention.

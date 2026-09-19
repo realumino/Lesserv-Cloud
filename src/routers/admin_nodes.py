@@ -8,11 +8,14 @@ endpoints translate between HTTP and the service layer.
 """
 
 from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi.responses import JSONResponse
+
+import time
 
 import db
-from models import NodeCreate, NodeOut, NodeUpdate
+from models import NodeCreate, NodeOut, NodeSyncOut, NodeUpdate
 from routers.deps import conn
-from services import config_service, node_service, xray_service
+from services import config_service, node_service, node_state_service, node_token_service, render_service
 
 router = APIRouter(prefix="/api/admin", tags=["admin-nodes"])
 
@@ -90,6 +93,31 @@ async def update_node(node_id: str, payload: NodeUpdate, conn=Depends(conn)):
     return node
 
 
+@router.post("/nodes/{node_id}/token", status_code=201)
+async def mint_node_token(node_id: str, conn=Depends(conn)):
+    """Mint (or rotate) one node's bearer token; plaintext shown once.
+
+    Why re-POST rotates with immediate invalidation: the new hash
+    replaces the old in one statement, so there is exactly one valid
+    token per node. The admin copies the plaintext into `agent.toml`
+    (mode 0600) — it is never stored and never returned again.
+    """
+    node = await db.get_node(conn, node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="node not found")
+    token = node_token_service.mint_token()
+    await db.set_token_hash(conn, node_id, node_token_service.token_hash(token))
+    return JSONResponse(
+        status_code=201,
+        content={
+            "node_id": node_id,
+            "token": token,
+            "created_at": int(time.time()),
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.get("/nodes/{node_id}/config")
 async def get_config(node_id: str, conn=Depends(conn)):
     """Return the node's authored config, opaque and untouched."""
@@ -98,7 +126,7 @@ async def get_config(node_id: str, conn=Depends(conn)):
 
 @router.put("/nodes/{node_id}/config")
 async def put_config(node_id: str, payload: dict = Body(...), conn=Depends(conn)):
-    """Replace the node's opaque config and sync the local runtime.
+    """Replace the node's opaque config; agents converge on next heartbeat.
 
     Why PUT instead of the archived POST: replacing the whole document is
     idempotent, so a retried request can never double-apply. The body is
@@ -115,18 +143,38 @@ async def put_config(node_id: str, payload: dict = Body(...), conn=Depends(conn)
 
 @router.get("/nodes/{node_id}/config/runtime")
 async def get_runtime_config(node_id: str, conn=Depends(conn)):
-    """Return the rendered config the node's local Xray last received.
+    """Return the config the plane would serve this node right now.
 
-    Why the envelope with generated_at: the admin compares authored vs
-    runtime side by side; the timestamp reveals a stale runtime (a
-    skipped or failed sync). 404 because before the first successful
-    sync the file simply does not exist.
+    Why a live render and not a file (M3 change): the plane no longer
+    writes runtime files or runs Xray — the rendered artifact is computed
+    on demand from current database state, so this pane can never go
+    stale. 404 when the node has no renderable config yet.
     """
     await _node_or_404(conn, node_id)
-    config = xray_service.load_runtime_config(node_id)
-    if config is None:
+    runtime, warnings = await render_service.desired_config(conn, node_id)
+    if runtime is None:
         raise HTTPException(status_code=404, detail="runtime config not found")
-    return {"config": config, "generated_at": xray_service.runtime_mtime(node_id)}
+    return {
+        "config": runtime,
+        "hash": render_service.config_hash(runtime),
+        "warnings": warnings,
+    }
+
+
+@router.get("/nodes/{node_id}/sync", response_model=NodeSyncOut)
+async def get_sync_state(node_id: str, conn=Depends(conn)):
+    """Return drift at a glance: desired vs applied hash plus liveness.
+
+    Why desired is computed live: it is a pure function of current
+    database state, so the view is always fresh. `in_sync` is true only
+    when a renderable config exists and the node reported that exact
+    hash — the content-hash convergence property the agent loop rests
+    on. 404 for an unknown node.
+    """
+    state = await node_state_service.sync_state(conn, node_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="node not found")
+    return state
 
 
 @router.get("/nodes/{node_id}/inbounds")
@@ -145,16 +193,13 @@ async def get_outbounds(node_id: str, conn=Depends(conn)):
 
 @router.get("/status")
 async def get_status(conn=Depends(conn)):
-    """Return a composite snapshot for the admin status bar.
+    """Return counts for the admin status bar.
 
-    Why these four fields: node and user counts plus the local Xray
-    health. `config_loaded` is gone — config presence is per node now and
-    visible as 404 vs 200 on each node's config endpoint.
+    Why only counts: the plane no longer runs Xray (M3 deleted the local
+    subprocess), so per-node health lives on the sync endpoint — this
+    stays a cheap composite snapshot.
     """
-    proc = xray_service.status()
     return {
         "node_count": len(await db.list_nodes(conn)),
         "user_count": len(await db.list_users(conn)),
-        "xray_running": proc["running"],
-        "xray_pid": proc["pid"],
     }

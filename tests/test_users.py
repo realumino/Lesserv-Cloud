@@ -3,11 +3,11 @@
 Uses the standard library's unittest so there are no extra dependencies.
 The db CRUD layer's raw SQL round-trips live in tests/test_db.py; this
 file pins what the API accepts and the business rules (uuid stability,
-authoritative access updates, sync triggers).
+authoritative access updates). Mutations only write rows — agents
+converge on their next heartbeat, nothing is pushed (M3).
 """
 
 import unittest
-from unittest import mock
 
 from pydantic import ValidationError
 
@@ -93,17 +93,11 @@ class TestEnsureUuids(unittest.TestCase):
 
 
 class TestUserService(unittest.IsolatedAsyncioTestCase):
-    """Create/update/delete rules and the sync triggers around them."""
+    """Create/update/delete rules; nothing is pushed (M3 pull model)."""
 
     def setUp(self):
         self.conn, self.path = open_fresh_db_sync()
         self.addCleanup(cleanup_db, self.conn, self.path)
-        # Patch through the module object the service actually calls, not
-        # a string target: string targets re-import and can miss the code
-        # under test if module identity ever changes between tests.
-        patcher = mock.patch.object(user_service.xray_service, "sync_nodes")
-        self.sync_mock = patcher.start()
-        self.addCleanup(patcher.stop)
 
     def _access(self, inbounds=(), outbounds=()):
         """Build one AccessIn payload section."""
@@ -111,7 +105,7 @@ class TestUserService(unittest.IsolatedAsyncioTestCase):
             allowed_inbounds=list(inbounds), allowed_outbounds=list(outbounds)
         )
 
-    async def test_create_writes_access_rows_and_syncs_each_node(self):
+    async def test_create_writes_access_rows(self):
         created = await user_service.create_user(self.conn, UserCreate(
             username="bob",
             access={"tokyo01": self._access(["reality"], ["jijiguo"])},
@@ -124,21 +118,18 @@ class TestUserService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             created["access"]["tokyo01"]["allowed_inbounds"], ["reality"]
         )
-        self.sync_mock.assert_called_once_with(self.conn, ["tokyo01"])
 
-    async def test_create_with_no_access_writes_no_rows_and_no_sync(self):
+    async def test_create_with_no_access_writes_no_rows(self):
         await user_service.create_user(self.conn, UserCreate(username="bob"))
 
         stored = await user_service.get_user_with_access(self.conn, "bob")
         self.assertEqual(stored["access"], {})
-        self.sync_mock.assert_not_called()
 
     async def test_update_merges_fields_and_keeps_uuids_stable(self):
         created = await user_service.create_user(self.conn, UserCreate(
             username="bob",
             access={"tokyo01": self._access(["reality"], ["jijiguo"])},
         ))
-        self.sync_mock.reset_mock()
 
         updated = await user_service.update_user(
             self.conn, "bob", UserUpdate(note="new")
@@ -148,7 +139,6 @@ class TestUserService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             updated["access"], created["access"]
         )
-        self.sync_mock.assert_not_called()
 
     async def test_update_with_access_adds_exactly_one_new_uuid(self):
         created = await user_service.create_user(self.conn, UserCreate(
@@ -190,23 +180,19 @@ class TestUserService(unittest.IsolatedAsyncioTestCase):
         access = await user_service.get_user_with_access(self.conn, "bob")
         self.assertIn("tokyo01", access["access"])
 
-    async def test_update_missing_user_returns_none_and_never_syncs(self):
+    async def test_update_missing_user_returns_none(self):
         self.assertIsNone(
             await user_service.update_user(self.conn, "ghost", UserUpdate(note="x"))
         )
-        self.sync_mock.assert_not_called()
 
-    async def test_delete_reports_existence_and_syncs_affected_nodes(self):
+    async def test_delete_reports_existence(self):
         await user_service.create_user(self.conn, UserCreate(username="bob"))
         await user_service.update_user(self.conn, "bob", UserUpdate(access={
             "tokyo01": self._access(), "toyama01": self._access(),
         }))
-        self.sync_mock.reset_mock()
 
         self.assertTrue(await user_service.delete_user(self.conn, "bob"))
-        self.sync_mock.assert_called_once_with(self.conn, ["tokyo01", "toyama01"])
         self.assertFalse(await user_service.delete_user(self.conn, "bob"))
-        self.assertEqual(self.sync_mock.call_count, 1)
 
 
 if __name__ == "__main__":

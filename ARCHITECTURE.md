@@ -101,8 +101,9 @@ The schema comes from `migrations/*.sql` — the single source of truth for
 both backends. Locally, `local.py`'s lifespan applies them through
 `migrations.py` (a tiny runner that records applied filenames in a
 `schema_migrations` table); on Workers, wrangler applies the same files
-(`d1 migrations apply`), which is why M4's "migrations apply cleanly to a
-fresh D1" is automatic rather than a rewrite.
+(`d1 migrations apply`), which is why the M4 proof that migrations land
+cleanly on a fresh D1 was applying the same files, not a rewrite
+(runbook and evidence in `docs/DEPLOY.md`).
 
 The import root is `src/` (the directory workerd treats as the module
 root), so application imports are flat: `from core.x25519 import ...`.
@@ -231,7 +232,7 @@ that describes something belonging to a specific machine.
 | `link_profiles` | `(node_id, id)` | M2 | per-inbound client-side variants (CDN and similar) |
 | `config_versions` | `id` | later | history of rendered configs per node, for diff and rollback |
 | `node_stats` | `(node_id, email)` | M7 | traffic counters |
-| `audit_log` | `id` | M4+ | who changed what, with the actor taken from the Access JWT |
+| `audit_log` | `id` | later | who changed what, with the actor taken from a verified Access JWT (verification itself also deferred) |
 
 Notes worth keeping in mind:
 
@@ -275,25 +276,34 @@ There are exactly four kinds of caller, and each has its own mechanism.
 | `/api/health` | anyone | none | — |
 
 **Admin.** Cloudflare Access protects the hostname with a default-deny
-policy, plus bypass policies for the three public paths. Default-deny is
+policy, plus bypass policies for the three public paths (live since M4;
+the runbook is `docs/DEPLOY.md`). Default-deny is
 chosen deliberately: a new admin route that someone forgets to protect is
 still protected, and a typo in a bypass path fails closed (it breaks the
 public thing rather than exposing the private one). The Worker receives a
-signed `Cf-Access-Jwt-Assertion` and uses its email as the audit actor.
-The header is only meaningful on a path Access actually covers — on an
-uncovered path it is attacker-controlled, which is one more reason the
-route groups must be exhaustive and closed.
+signed `Cf-Access-Jwt-Assertion` and uses its email as the audit actor —
+the JWT is not verified yet (no audit log to attribute), so treat the
+header as untrusted until that milestone. The header is only meaningful
+on a path Access actually covers — on an uncovered path it is
+attacker-controlled, which is one more reason the route groups must be
+exhaustive and closed.
 
-**The in-app half of the boundary (since M1).** Cloudflare Access is M4,
-but the route-group rule is enforced in the app already: `main.py`
+**The in-app half of the boundary (since M1).** Cloudflare Access is live,
+but the route-group rule is still enforced in the app: `main.py`
 registers a middleware backed by `route_groups.is_allowed_path`, and any
 request outside the four prefixes gets a bare 404 before routing — even a
 route someone registers at the wrong prefix later. FastAPI's `/docs`,
 `/redoc`, and `/openapi.json` are disabled for the same reason: they sit
-at the root, outside every group, and the guard is fail-closed. The
-pre-M4 admin surface is therefore unauthenticated by design: on a dev
-machine `localhost` is the boundary, and the fail-closed check is about
-*paths*, not identity.
+at the root, outside every group, and the guard is fail-closed.
+
+The admin **SPA** is a fifth, non-API surface: static assets served from
+`frontend/dist` at `/admin/*` by Workers' asset layer, which runs *before*
+the Worker, so those paths never reach the route guard — that is why the
+guard's four-prefix invariant survives the SPA. The assets sit behind the
+same Access application, and `/` is covered by it too (an Access bypass
+for path `/` would match every path, so the root is protected rather than
+public — see `docs/DEPLOY.md`). The app in the repo is a placeholder
+until M5 rebuilds it.
 
 **Node.** 32 random bytes, base64url, minted via
 `POST /api/admin/nodes/{id}/token`, shown once at creation and stored
@@ -317,22 +327,25 @@ that contains nothing but the links.
 ## Key custody
 
 The control plane generates every REALITY private key and stores it in
-the database. The target storage is AES-256-GCM ciphertext with a key
-held in a Worker secret:
+the database. The storage is AES-256-GCM ciphertext with a key held in a
+Worker secret (`REALITY_KEY_SECRET`), live since M4:
 
 ```
 v1:<base64(iv || ciphertext+tag)>
 ```
 
-**Status: plaintext until M4.** The scheme prefix and its IV mean the
-format can rotate later without a migration, and every stored value is
-self-contained — but `crypto.py` speaks WebCrypto, which only exists
-inside workerd, and the encryption key is a Worker secret that does not
-exist until M4. M1–M3 therefore store the private key as-is, and M4 adds
-the secret plus a one-time re-encrypt of existing rows. The runtime
-invariant below holds from day one.
+The scheme prefix and its IV mean the format can rotate later without a
+migration, and every stored value is self-contained. `crypto.py` speaks
+WebCrypto, which only exists inside workerd, so sealing happens through
+`services/key_cipher.py`: inside workerd, `seal` encrypts with the secret
+and `unseal` decrypts; under CPython (local uvicorn, tests) there is no
+secret and no cipher, so the same functions store and read plaintext.
+The `v1:` prefix is the discriminator, which is why pre-M4 plaintext
+rows keep reading and no migration was needed to introduce the format.
+M4's deploy therefore starts from a fresh D1 where every generated key
+is ciphertext from the first day.
 
-Only `reality_keys.private_key` will be encrypted. User UUIDs and node
+Only `reality_keys.private_key` is encrypted. User UUIDs and node
 configs are far less sensitive, and encrypting everything would make every
 query worse for no real gain. Node tokens are a third thing again: hashed,
 not encrypted, because they are never read back.
@@ -399,8 +412,8 @@ side, and an empty response tells the client nothing new.
 
 ## Life of a change: the admin edits a user
 
-1. The admin saves the user form. (M4 adds Access authentication; before
-   that, the dev machine's localhost is the boundary.)
+1. The admin saves the user form. (Cloudflare Access authenticates the
+   request since M4; locally, the dev machine's localhost is the boundary.)
 2. The router validates the payload and calls the user service, which
    writes `users` and the `user_node_access` rows and runs `ensure_uuids`
    per node — existing pairs keep their UUID, new pairs get one.

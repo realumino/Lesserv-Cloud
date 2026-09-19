@@ -10,6 +10,9 @@ python_modules/
 .dev.vars
 node_modules/
 
+# operator-private deploy values (real domain, real D1 id): never commit
+wrangler.local.jsonc
+
 # local SQLite (dev only; production data lives in D1)
 data/*.db
 data/runtime/
@@ -17,3 +20,4 @@ data/
 
 # frontend
 frontend/node_modules/
+frontend/dist/

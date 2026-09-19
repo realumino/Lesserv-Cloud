@@ -4,6 +4,11 @@ This file is the **single source of truth** for the node protocol. It lives
 in the control-plane repo because the control plane is the server and owns
 the contract; `Lesserv-Agent` links here rather than copying anything.
 
+**Status: frozen at `protocol: 1` as of M4** — the deployed control plane
+serves this exact contract, and the agent converges against it with zero
+code changes. Any change to a field's meaning is a new version, coordinated
+across both repos and this document together.
+
 Two repos implement this document, so it is versioned and it is binding.
 The rule that keeps them in sync: **the plane may always speak older
 protocol versions; the agent never guesses.**

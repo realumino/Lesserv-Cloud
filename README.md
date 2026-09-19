@@ -16,7 +16,8 @@ manage.
 | [`AGENTS.md`](AGENTS.md) | Stable context: what this is, locked decisions, how to run it, conventions, gotchas |
 | [`PLAN.md`](PLAN.md) | Volatile state: the milestone roadmap and current status |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | The walkthrough: render pipeline, data model, trust boundaries, request flows |
-| [`docs/PROTOCOL.md`](docs/PROTOCOL.md) | The cross-repo contract with [`Lesserv-Agent`](https://github.com/realumino/Lesserv-Agent) |
+| [`docs/PROTOCOL.md`](docs/PROTOCOL.md) | The cross-repo contract with `Lesserv-Agent` |
+| [`docs/DEPLOY.md`](docs/DEPLOY.md) | The deploy runbook: D1, secret, Access applications, and post-deploy smoke checks |
 
 ## Related repos
 

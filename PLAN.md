@@ -26,7 +26,7 @@ Nothing is stored in qualified form. The qualified names exist only in the
 rendered artifact and in generated share links, which is why renaming a
 node id is a single row update rather than a migration.
 
-## Current status: M3 complete — the agent, split out
+## Current status: M4 complete — the control plane is deployed
 
 M1 recreated the archived panel's behavior with the `node` dimension
 wired in from the start: configs, REALITY keys, and per-user access are
@@ -46,13 +46,32 @@ mints per-node bearer tokens, shows drift on `GET .../sync`, and manages
 no Xray — `xray_service.py` and `settings.py` are deleted, the runtime
 pane is a live render, and user edits converge on next heartbeat with no
 push. 194 tests pass locally (SQLite backend). The executable plan and
-its decisions live in [`docs/M3-PLAN.md`](docs/M3-PLAN.md). M0 ran local-only
-(`pywrangler dev` + local D1, no Cloudflare account), per the rule below.
+its decisions live in [`docs/M3-PLAN.md`](docs/M3-PLAN.md). M0 ran
+local-only (`pywrangler dev` + local D1, no Cloudflare account), per the
+rule below.
 
-M0–M3 involve zero Cloudflare: the render pipeline and the agent protocol
-are built and debugged locally first, on the one VPS available. The
-Cloudflare port (M4) is deliberately last among the structural milestones
-so that it re-platforms something already proven.
+M4 deployed the plane with zero agent-side changes: the same FastAPI app
+runs as a Python Worker on the operator's own hostname (hostname, D1
+database, and other account values are deliberately absent from this
+public repo — see `docs/DEPLOY.md`) with D1 as the store (`db.py`
+signatures unchanged — the M1 async groundwork made the port a proof
+rather than a rewrite), migrations applied cleanly to the fresh remote
+D1, Cloudflare Access now guards `/api/admin/*` and `/admin/*` (one broad
+allow app + three bypass apps; an Access bypass for path `/` matches
+*every* path, so the root is deliberately protected instead of public),
+the admin SPA ships as a placeholder under `frontend/` and is served
+from static assets at `/admin` with the matching Vite `base`, and
+REALITY private keys are stored as `v1:` AES-GCM ciphertext under the
+`REALITY_KEY_SECRET` Worker secret — with one production lesson folded
+into `key_cipher` (PowerShell pipes a BOM into secrets). `docs/PROTOCOL.md`
+is frozen at `protocol: 1`, pinned by a test. 201 tests pass locally
+(SQLite backend). The deployed smoke — the full protocol sequence plus
+sealed-key and Access-bypass checks — passes against the live plane; the
+runbook and evidence live in [`docs/DEPLOY.md`](docs/DEPLOY.md). The one
+remaining acceptance item is operator-run: point the real agent on the
+VPS at the deployed plane (exact commands in `docs/DEPLOY.md`). The
+executable plan and its decisions live in
+[`docs/M4-PLAN.md`](docs/M4-PLAN.md).
 
 | # | Milestone | Status |
 |---|-----------|--------|
@@ -60,7 +79,7 @@ so that it re-platforms something already proven.
 | 1 | Scaffold + node-scoped data model (one node, SQLite) | done |
 | 2 | Qualifier + link profiles | done |
 | 3 | The agent, split out (systemd, pull over localhost) | done |
-| 4 | Control plane on Workers + D1 | not started |
+| 4 | Control plane on Workers + D1 | done (agent-on-VPS run = operator step) |
 | 5 | Node #2 + the new frontend | not started |
 | 6 | Subscriptions | not started |
 | 7 | Stats + dashboard | not started |

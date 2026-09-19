@@ -77,12 +77,23 @@ These were settled deliberately; do not relitigate them in passing.
 uv run pywrangler dev                              # the Worker + local D1, no CF account needed
 uv run uvicorn local:app --app-dir src --reload    # the same app for local tests/dev (SQLite, no D1)
 uv run python -m unittest discover -s tests -t . -v  # tests
-npx wrangler d1 migrations apply lesserv --local   # dev database
-npx wrangler d1 migrations apply lesserv --remote  # production
+npx wrangler d1 migrations apply <d1-database-name> --local   # dev database
+npx wrangler d1 migrations apply <d1-database-name> --remote  # production
 ```
 
-There is no frontend in the repo yet — the SPA is rebuilt at M5
-(`PLAN.md`); until then `/api/admin/*` is the interface. Two entrypoints,
+Since M4 the deployed plane is the real thing: a Python Worker + D1 +
+Access + static assets (hostname and resource ids are operator-specific
+and kept out of this public repo). The deploy runbook — D1
+migrations, the `REALITY_KEY_SECRET` secret, the Access applications, and
+the post-deploy smoke checks — lives in `docs/DEPLOY.md` and must be kept
+current by every deploy that changes a step. Real values (hostname, D1
+name/id) go in a gitignored `wrangler.local.jsonc`, never in committed
+files.
+
+There is no real frontend yet — a placeholder SPA ships under
+`frontend/` (Vite, base `/admin/`) and is served from static assets; the
+SPA is rebuilt at M5 (`PLAN.md`); until then `/api/admin/*` is the
+interface. Two entrypoints,
 one app: `src/worker.py` (`asgi.entrypoint`, D1) and `src/local.py`
 (uvicorn + SQLite). The import root is `src/`, so imports
 inside the app are flat (`from core.x25519 import ...`); uvicorn needs

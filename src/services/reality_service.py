@@ -11,27 +11,31 @@ only by explicit rotation (which breaks every client using the old key —
 hence it must be a deliberate operator action, never an automatic side
 effect of a render).
 
-M1 note: keys are stored as plaintext. M4 adds the Worker secret and the
-`v1:<base64(iv || ct+tag)>` ciphertext format; crypto.py (WebCrypto) only
-exists inside workerd, so the local CPython runtime cannot encrypt yet.
+M4 note: keys are stored via `key_cipher` — `v1:` AES-GCM ciphertext when
+the Worker secret exists, plaintext outside workerd (local dev, tests).
+Decryption has exactly one seam (`key_map`/`unseal`), so the render and
+link paths always see the usable key while storage never does.
 """
 
 import time
 
 from core import x25519
 from db import list_reality_keys, upsert_reality_key
-from services import config_service
+from services import config_service, key_cipher
 
 
 async def key_map(conn, node_id) -> dict:
-    """Return {inbound_tag: private_key} for one node's stored keys.
+    """Return {inbound_tag: private_key} for one node's stored keys, decrypted.
 
     Why the flat shape: apply_reality_keys fills the runtime by looking up
     each inbound's tag, and share links pick their private key per inbound
-    the same way — a plain dict keeps both callers trivial.
+    the same way — a plain dict keeps both callers trivial. Why unseal
+    here: storage holds `v1:` ciphertext under M4, and every consumer of
+    this module needs the usable key, so decryption has exactly one seam.
     """
     stored = await list_reality_keys(conn, node_id)
-    return {tag: row["private_key"] for tag, row in stored.items()}
+    return {tag: await key_cipher.unseal(row["private_key"])
+            for tag, row in stored.items()}
 
 
 async def ensure_keys(conn, node_id, config) -> dict:
@@ -40,14 +44,16 @@ async def ensure_keys(conn, node_id, config) -> dict:
     Why called from the render path: a config can arrive at any time and
     every render runs through the same choke point, so a newly added
     REALITY inbound gets a stored key without any extra wiring. Idempotent:
-    only the missing tags generate. Returns the full {tag: private_key} map.
+    only the missing tags generate. Seal happens here and nowhere else —
+    a plaintext key must never reach storage when a cipher is available.
+    Returns the full decrypted {tag: private_key} map.
     """
     stored = await key_map(conn, node_id)
     for tag in config_service.reality_inbound_tags(config):
         if tag not in stored:
+            sealed = await key_cipher.seal(x25519.generate_private_key())
             await upsert_reality_key(
-                conn, node_id, tag,
-                x25519.generate_private_key(), int(time.time()),
+                conn, node_id, tag, sealed, int(time.time()),
             )
     return await key_map(conn, node_id)
 
@@ -58,10 +64,12 @@ async def rotate_key(conn, node_id, tag) -> str:
     Why the timestamp is refreshed: `created_at` doubles as the
     generation/rotation time, so the UI can show when the current key
     became effective. Callers must re-render afterwards — until then the
-    runtime still serves the old key.
+    runtime still serves the old key. Returns the plaintext key because
+    the rotation response derives its public half from it.
     """
     private_key = x25519.generate_private_key()
-    await upsert_reality_key(conn, node_id, tag, private_key, int(time.time()))
+    sealed = await key_cipher.seal(private_key)
+    await upsert_reality_key(conn, node_id, tag, sealed, int(time.time()))
     return private_key
 
 
@@ -72,11 +80,10 @@ async def public_key(conn, node_id, tag) -> str | None:
     private key, so storing it would only invite the two disagreeing.
     None means the tag has no key yet — the caller renders an empty state.
     """
-    stored = await list_reality_keys(conn, node_id)
-    row = stored.get(tag)
-    if row is None:
+    private_key = (await key_map(conn, node_id)).get(tag)
+    if private_key is None:
         return None
-    return x25519.derive_public_key(row["private_key"])
+    return x25519.derive_public_key(private_key)
 
 
 async def list_keys(conn, node_id, config) -> list[dict]:
@@ -93,11 +100,13 @@ async def list_keys(conn, node_id, config) -> list[dict]:
     rows = []
     for tag in config_service.reality_inbound_tags(config):
         row = stored.get(tag)
+        public_key = None
+        if row is not None:
+            private_key = await key_cipher.unseal(row["private_key"])
+            public_key = x25519.derive_public_key(private_key)
         rows.append({
             "inbound": tag,
-            "public_key": (
-                x25519.derive_public_key(row["private_key"]) if row else None
-            ),
+            "public_key": public_key,
             "created_at": row["created_at"] if row else None,
         })
     return rows

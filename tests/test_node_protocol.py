@@ -429,5 +429,20 @@ class TestShouldTouch(unittest.TestCase):
             self._values(applied_hash="def"), 1001))
 
 
+class TestProtocolFreeze(unittest.TestCase):
+    """PROTOCOL.md is frozen at protocol 1 for the deployed plane (M4).
+
+    Why a pin and not a docstring: both repos implement this number, and
+    the agent's zero-code-change proof against Workers depends on it not
+    drifting silently. Bumping it means editing this test, the agent, and
+    PROTOCOL.md together.
+    """
+
+    def test_served_protocol_version_is_one(self):
+        import routers.node
+
+        self.assertEqual(routers.node.PROTOCOL_VERSION, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

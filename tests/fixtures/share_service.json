@@ -1,0 +1,447 @@
+{
+  "config": {
+    "inbounds": [
+      {
+        "tag": "REALITY_IN",
+        "protocol": "vless",
+        "listen": "0.0.0.0",
+        "port": 443,
+        "settings": {
+          "flow": "xtls-rprx-vision"
+        },
+        "streamSettings": {
+          "network": "raw",
+          "security": "reality",
+          "realitySettings": {
+            "serverNames": [
+              "apple.com"
+            ],
+            "privateKey": "sMS4KcvOCag9dZsYPa3sFfVLSn3IGNEI34B7ENhGBFE",
+            "shortIds": [
+              "1234"
+            ]
+          }
+        }
+      },
+      {
+        "tag": "XHTTP_IN",
+        "protocol": "vless",
+        "listen": "203.0.113.5",
+        "port": 8080,
+        "streamSettings": {
+          "network": "xhttp",
+          "xhttpSettings": {
+            "path": "/xhttp-path",
+            "host": "xhttp.example.com",
+            "mode": "auto"
+          }
+        }
+      },
+      {
+        "tag": "WS_IN",
+        "protocol": "vless",
+        "listen": "::",
+        "port": 8443,
+        "streamSettings": {
+          "network": "ws",
+          "wsSettings": {
+            "path": "/ws-path",
+            "host": "ws.example.com"
+          }
+        }
+      },
+      {
+        "tag": "HTTP_ONLY",
+        "protocol": "http",
+        "port": 80
+      }
+    ],
+    "outbounds": [
+      {
+        "tag": "JAPAN",
+        "protocol": "freedom"
+      },
+      {
+        "tag": "HK",
+        "protocol": "freedom"
+      }
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "raw_reality",
+      "user": {
+        "username": "alice",
+        "status": "active",
+        "allowed_inbounds": [
+          "REALITY_IN"
+        ],
+        "allowed_outbounds": [
+          "JAPAN"
+        ],
+        "uuids": {
+          "alice@JAPAN": "11111111-1111-1111-1111-111111111111"
+        }
+      },
+      "configured_address": "example.com",
+      "reality_keys": null,
+      "profiles": null,
+      "node_label": null,
+      "labels": null,
+      "links": [
+        {
+          "inbound": "REALITY_IN",
+          "outbound": "JAPAN",
+          "email": "alice@JAPAN",
+          "profile": null,
+          "label": null,
+          "uri": "vless://11111111-1111-1111-1111-111111111111@example.com:443?encryption=none&type=tcp&security=reality&sni=apple.com&fp=chrome&pbk=w_OZ1uUriCcd12KatYIFBJulAFDGNp9V1wL_XiQBt08&sid=1234&flow=xtls-rprx-vision#alice%40JAPAN%20%28REALITY_IN%29"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "reality_key_override",
+      "user": {
+        "username": "alice",
+        "status": "active",
+        "allowed_inbounds": [
+          "REALITY_IN"
+        ],
+        "allowed_outbounds": [
+          "JAPAN"
+        ],
+        "uuids": {
+          "alice@JAPAN": "11111111-1111-1111-1111-111111111111"
+        }
+      },
+      "configured_address": "example.com",
+      "reality_keys": {
+        "REALITY_IN": "dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo"
+      },
+      "profiles": null,
+      "node_label": null,
+      "labels": null,
+      "links": [
+        {
+          "inbound": "REALITY_IN",
+          "outbound": "JAPAN",
+          "email": "alice@JAPAN",
+          "profile": null,
+          "label": null,
+          "uri": "vless://11111111-1111-1111-1111-111111111111@example.com:443?encryption=none&type=tcp&security=reality&sni=apple.com&fp=chrome&pbk=hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo&sid=1234&flow=xtls-rprx-vision#alice%40JAPAN%20%28REALITY_IN%29"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "xhttp_address_fallback",
+      "user": {
+        "username": "alice",
+        "status": "active",
+        "allowed_inbounds": [
+          "XHTTP_IN"
+        ],
+        "allowed_outbounds": [
+          "JAPAN"
+        ],
+        "uuids": {
+          "alice@JAPAN": "11111111-1111-1111-1111-111111111111"
+        }
+      },
+      "configured_address": "",
+      "reality_keys": null,
+      "profiles": null,
+      "node_label": null,
+      "labels": null,
+      "links": [
+        {
+          "inbound": "XHTTP_IN",
+          "outbound": "JAPAN",
+          "email": "alice@JAPAN",
+          "profile": null,
+          "label": null,
+          "uri": "vless://11111111-1111-1111-1111-111111111111@203.0.113.5:8080?encryption=none&type=xhttp&path=%2Fxhttp-path&host=xhttp.example.com&mode=auto#alice%40JAPAN%20%28XHTTP_IN%29"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "wildcard_listens_only",
+      "user": {
+        "username": "alice",
+        "status": "active",
+        "allowed_inbounds": [
+          "REALITY_IN",
+          "XHTTP_IN",
+          "WS_IN"
+        ],
+        "allowed_outbounds": [
+          "JAPAN"
+        ],
+        "uuids": {
+          "alice@JAPAN": "11111111-1111-1111-1111-111111111111"
+        }
+      },
+      "configured_address": "",
+      "reality_keys": null,
+      "profiles": null,
+      "node_label": null,
+      "labels": null,
+      "links": [
+        {
+          "inbound": "XHTTP_IN",
+          "outbound": "JAPAN",
+          "email": "alice@JAPAN",
+          "profile": null,
+          "label": null,
+          "uri": "vless://11111111-1111-1111-1111-111111111111@203.0.113.5:8080?encryption=none&type=xhttp&path=%2Fxhttp-path&host=xhttp.example.com&mode=auto#alice%40JAPAN%20%28XHTTP_IN%29"
+        }
+      ],
+      "warnings": [
+        "no address for inbound 'REALITY_IN'",
+        "no address for inbound 'WS_IN'"
+      ]
+    },
+    {
+      "name": "profiles_and_labels",
+      "user": {
+        "username": "alice",
+        "status": "active",
+        "allowed_inbounds": [
+          "XHTTP_IN"
+        ],
+        "allowed_outbounds": [
+          "JAPAN"
+        ],
+        "uuids": {
+          "alice@JAPAN": "11111111-1111-1111-1111-111111111111"
+        }
+      },
+      "configured_address": "example.com",
+      "reality_keys": null,
+      "profiles": {
+        "XHTTP_IN": [
+          {
+            "id": "cdn",
+            "label": "CDN",
+            "overrides": {
+              "address": "cdn.example.com",
+              "port": 443
+            }
+          }
+        ]
+      },
+      "node_label": "Tokyo 01",
+      "labels": {
+        "XHTTP_IN": "XHTTP",
+        "JAPAN": "Japan"
+      },
+      "links": [
+        {
+          "inbound": "XHTTP_IN",
+          "outbound": "JAPAN",
+          "email": "alice@JAPAN",
+          "profile": null,
+          "label": "Tokyo 01 \u00b7 XHTTP \u2192 Japan",
+          "uri": "vless://11111111-1111-1111-1111-111111111111@example.com:8080?encryption=none&type=xhttp&path=%2Fxhttp-path&host=xhttp.example.com&mode=auto#Tokyo%2001%20%C2%B7%20XHTTP%20%E2%86%92%20Japan"
+        },
+        {
+          "inbound": "XHTTP_IN",
+          "outbound": "JAPAN",
+          "email": "alice@JAPAN",
+          "profile": "cdn",
+          "label": "Tokyo 01 \u00b7 CDN \u2192 Japan",
+          "uri": "vless://11111111-1111-1111-1111-111111111111@cdn.example.com:443?encryption=none&type=xhttp&path=%2Fxhttp-path&host=xhttp.example.com&mode=auto#Tokyo%2001%20%C2%B7%20CDN%20%E2%86%92%20Japan"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "profile_supplies_address",
+      "user": {
+        "username": "alice",
+        "status": "active",
+        "allowed_inbounds": [
+          "REALITY_IN"
+        ],
+        "allowed_outbounds": [
+          "JAPAN"
+        ],
+        "uuids": {
+          "alice@JAPAN": "11111111-1111-1111-1111-111111111111"
+        }
+      },
+      "configured_address": "",
+      "reality_keys": null,
+      "profiles": {
+        "REALITY_IN": [
+          {
+            "id": "cdn",
+            "label": "CDN",
+            "overrides": {
+              "address": "cdn.example.com",
+              "port": 443
+            }
+          }
+        ]
+      },
+      "node_label": null,
+      "labels": null,
+      "links": [
+        {
+          "inbound": "REALITY_IN",
+          "outbound": "JAPAN",
+          "email": "alice@JAPAN",
+          "profile": "cdn",
+          "label": null,
+          "uri": "vless://11111111-1111-1111-1111-111111111111@cdn.example.com:443?encryption=none&type=tcp&security=reality&sni=apple.com&fp=chrome&pbk=w_OZ1uUriCcd12KatYIFBJulAFDGNp9V1wL_XiQBt08&sid=1234&flow=xtls-rprx-vision#alice%40JAPAN%20%28REALITY_IN%29"
+        }
+      ],
+      "warnings": [
+        "no address for inbound 'REALITY_IN'"
+      ]
+    },
+    {
+      "name": "two_exits_one_profile",
+      "user": {
+        "username": "alice",
+        "status": "active",
+        "allowed_inbounds": [
+          "XHTTP_IN"
+        ],
+        "allowed_outbounds": [
+          "HK",
+          "JAPAN"
+        ],
+        "uuids": {
+          "alice@HK": "11111111-1111-1111-1111-111111111111",
+          "alice@JAPAN": "11111111-1111-1111-1111-111111111111"
+        }
+      },
+      "configured_address": "example.com",
+      "reality_keys": null,
+      "profiles": {
+        "XHTTP_IN": [
+          {
+            "id": "cdn",
+            "label": "CDN",
+            "overrides": {
+              "address": "cdn.example.com",
+              "port": 443
+            }
+          }
+        ]
+      },
+      "node_label": null,
+      "labels": null,
+      "links": [
+        {
+          "inbound": "XHTTP_IN",
+          "outbound": "HK",
+          "email": "alice@HK",
+          "profile": null,
+          "label": null,
+          "uri": "vless://11111111-1111-1111-1111-111111111111@example.com:8080?encryption=none&type=xhttp&path=%2Fxhttp-path&host=xhttp.example.com&mode=auto#alice%40HK%20%28XHTTP_IN%29"
+        },
+        {
+          "inbound": "XHTTP_IN",
+          "outbound": "HK",
+          "email": "alice@HK",
+          "profile": "cdn",
+          "label": null,
+          "uri": "vless://11111111-1111-1111-1111-111111111111@cdn.example.com:443?encryption=none&type=xhttp&path=%2Fxhttp-path&host=xhttp.example.com&mode=auto#alice%40HK%20%28XHTTP_IN%29"
+        },
+        {
+          "inbound": "XHTTP_IN",
+          "outbound": "JAPAN",
+          "email": "alice@JAPAN",
+          "profile": null,
+          "label": null,
+          "uri": "vless://11111111-1111-1111-1111-111111111111@example.com:8080?encryption=none&type=xhttp&path=%2Fxhttp-path&host=xhttp.example.com&mode=auto#alice%40JAPAN%20%28XHTTP_IN%29"
+        },
+        {
+          "inbound": "XHTTP_IN",
+          "outbound": "JAPAN",
+          "email": "alice@JAPAN",
+          "profile": "cdn",
+          "label": null,
+          "uri": "vless://11111111-1111-1111-1111-111111111111@cdn.example.com:443?encryption=none&type=xhttp&path=%2Fxhttp-path&host=xhttp.example.com&mode=auto#alice%40JAPAN%20%28XHTTP_IN%29"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "name": "disabled_user",
+      "user": {
+        "username": "alice",
+        "status": "disabled",
+        "allowed_inbounds": [
+          "REALITY_IN"
+        ],
+        "allowed_outbounds": [
+          "JAPAN"
+        ],
+        "uuids": {
+          "alice@JAPAN": "11111111-1111-1111-1111-111111111111"
+        }
+      },
+      "configured_address": "example.com",
+      "reality_keys": null,
+      "profiles": null,
+      "node_label": null,
+      "labels": null,
+      "links": [
+        {
+          "inbound": "REALITY_IN",
+          "outbound": "JAPAN",
+          "email": "alice@JAPAN",
+          "profile": null,
+          "label": null,
+          "uri": "vless://11111111-1111-1111-1111-111111111111@example.com:443?encryption=none&type=tcp&security=reality&sni=apple.com&fp=chrome&pbk=w_OZ1uUriCcd12KatYIFBJulAFDGNp9V1wL_XiQBt08&sid=1234&flow=xtls-rprx-vision#alice%40JAPAN%20%28REALITY_IN%29"
+        }
+      ],
+      "warnings": [
+        "user alice is disabled"
+      ]
+    },
+    {
+      "name": "non_vless_and_unknown",
+      "user": {
+        "username": "alice",
+        "status": "active",
+        "allowed_inbounds": [
+          "REALITY_IN",
+          "HTTP_ONLY"
+        ],
+        "allowed_outbounds": [
+          "JAPAN",
+          "NOWHERE"
+        ],
+        "uuids": {
+          "alice@JAPAN": "11111111-1111-1111-1111-111111111111",
+          "alice@NOWHERE": "11111111-1111-1111-1111-111111111111"
+        }
+      },
+      "configured_address": "example.com",
+      "reality_keys": null,
+      "profiles": null,
+      "node_label": null,
+      "labels": null,
+      "links": [
+        {
+          "inbound": "REALITY_IN",
+          "outbound": "JAPAN",
+          "email": "alice@JAPAN",
+          "profile": null,
+          "label": null,
+          "uri": "vless://11111111-1111-1111-1111-111111111111@example.com:443?encryption=none&type=tcp&security=reality&sni=apple.com&fp=chrome&pbk=w_OZ1uUriCcd12KatYIFBJulAFDGNp9V1wL_XiQBt08&sid=1234&flow=xtls-rprx-vision#alice%40JAPAN%20%28REALITY_IN%29"
+        }
+      ],
+      "warnings": [
+        "unknown outbound 'NOWHERE'",
+        "skipping non-vless inbound 'HTTP_ONLY'"
+      ]
+    }
+  ]
+}

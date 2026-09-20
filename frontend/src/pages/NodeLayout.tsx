@@ -20,7 +20,7 @@ import ConfirmButton from "../components/ConfirmButton";
 import ErrorNote from "../components/ErrorNote";
 import HashChip from "../components/HashChip";
 import TokenDialog from "../components/TokenDialog";
-import { primaryButton, secondaryButton } from "../components/styles";
+import { dangerButton, secondaryButton } from "../components/styles";
 import { STATE_LABEL, STATE_TONE, fleetState } from "../lib/fleet";
 import { relativeTime } from "../lib/format";
 import type { NodeOut, NodeSyncOut } from "../types";
@@ -37,6 +37,9 @@ export default function NodeLayout() {
   const [sync, setSync] = useState<NodeSyncOut | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null);
+  // One mint at a time: a double-fire would rotate twice and the admin
+  // would copy a plaintext that is already dead.
+  const [minting, setMinting] = useState(false);
 
   const reload = useCallback(async () => {
     const [nodeResult, syncResult] = await Promise.all([
@@ -57,12 +60,17 @@ export default function NodeLayout() {
   }, [reload]);
 
   const mint = async () => {
-    const result = await mintNodeToken(nodeId);
-    if (result.error) {
-      setError(result.error);
-      return;
+    setMinting(true);
+    try {
+      const result = await mintNodeToken(nodeId);
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      setToken(result.data?.token ?? null);
+    } finally {
+      setMinting(false);
     }
-    setToken(result.data?.token ?? null);
   };
 
   if (error) {
@@ -77,7 +85,7 @@ export default function NodeLayout() {
       <NodeHeader
         node={node}
         sync={sync}
-        active={sync?.state === "active"}
+        busy={minting}
         onMint={() => void mint()}
         onRefresh={() => void reload()}
       />
@@ -99,13 +107,13 @@ export default function NodeLayout() {
 function NodeHeader({
   node,
   sync,
-  active,
+  busy,
   onMint,
   onRefresh,
 }: {
   node: NodeOut;
   sync: NodeSyncOut | null;
-  active: boolean;
+  busy: boolean;
   onMint: () => void;
   onRefresh: () => void;
 }) {
@@ -123,19 +131,14 @@ function NodeHeader({
           <button type="button" className={secondaryButton} onClick={onRefresh}>
             Refresh
           </button>
-          {active ? (
-            <ConfirmButton
-              className={secondaryButton}
-              message={`Rotate ${node.id}'s token? The node's agent is rejected until agent.toml is updated with the new token.`}
-              onConfirm={onMint}
-            >
-              Rotate token
-            </ConfirmButton>
-          ) : (
-            <button type="button" className={primaryButton} onClick={onMint}>
-              Mint token
-            </button>
-          )}
+          <ConfirmButton
+            className={dangerButton}
+            disabled={busy}
+            message={`Re-generate ${node.id}'s token? The current token stops working immediately; the agent is rejected until agent.toml is updated.`}
+            onConfirm={onMint}
+          >
+            Re-generate token
+          </ConfirmButton>
         </span>
       </div>
       <dl className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">

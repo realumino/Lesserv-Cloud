@@ -13,6 +13,31 @@ import db
 from models import NodeCreate, NodeUpdate
 from services import qualify_service
 
+_REPORTED_MAX_LEN = 255
+
+
+def reported_address_for(detected_ip, connecting_ip) -> str | None:
+    """Pick the reported address to store: the agent's claim, else the edge.
+
+    Why the agent's detected_ip wins: PROTOCOL.md defines it as the
+    node's own best guess at its public address. CF-Connecting-IP is the
+    fallback for agents that send none — the same fact, observed by the
+    edge instead of reported. The result is display data only, so an
+    oversized or whitespace-riddled value is skipped rather than
+    sanitized into something that looks trustworthy.
+    """
+    for candidate in (detected_ip, connecting_ip):
+        if not candidate:
+            continue
+        value = candidate.strip()
+        if (
+            value
+            and len(value) <= _REPORTED_MAX_LEN
+            and not any(char.isspace() for char in value)
+        ):
+            return value
+    return None
+
 
 def _to_out(node: dict) -> dict:
     """Project a db node row to the NodeOut shape.
@@ -24,6 +49,7 @@ def _to_out(node: dict) -> dict:
         "id": node["id"],
         "label": node["label"],
         "address": node["address"],
+        "reported_address": node["reported_address"],
         "created_at": node["created_at"],
         "has_config": node["config_json"] is not None,
     }

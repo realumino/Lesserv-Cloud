@@ -170,6 +170,19 @@ async def set_token_hash(conn, node_id, token_hash):
     )
 
 
+async def set_reported_address(conn, node_id, address):
+    """Store one node's agent-reported address (display only, never links).
+
+    Why a dedicated setter: the reported address is a fact the node states
+    about itself at enroll, not editable state like label and address.
+    Keeping it out of replace_node makes the split impossible to blur —
+    the admin owns the share-link domain, the node owns its own report.
+    """
+    await conn.execute(
+        "UPDATE nodes SET reported_address = ? WHERE id = ?", (address, node_id)
+    )
+
+
 async def touch_node(conn, node_id, last_seen, health, agent_version,
                      xray_version, last_error, applied_hash):
     """Overwrite one node's agent-reported liveness columns in one statement.

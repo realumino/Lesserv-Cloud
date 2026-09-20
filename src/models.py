@@ -93,11 +93,16 @@ class NodeOut(BaseModel):
 
     Why has_config: a list view must learn which nodes have a config
     without fetching every config blob.
+
+    Why reported_address sits beside address: the node reports its own
+    public IP at enroll (display only); the share-link host stays the
+    admin-set domain and is never derived from the report.
     """
 
     id: str
     label: str
     address: str
+    reported_address: str | None
     created_at: int
     has_config: bool
 

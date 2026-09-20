@@ -253,13 +253,15 @@ participates in the naming scheme or in generated rules.
 ## The data model
 
 The tables below start from M1 (schema in `migrations/0001_init.sql`) and
-include the M2 addition (`migrations/0002_link_profiles.sql`). The `node`
+include the M2 addition (`migrations/0002_link_profiles.sql`) and the
+post-M5 `reported_address` column (`migrations/0003_reported_address.sql`).
+The `node`
 dimension appears on every table
 that describes something belonging to a specific machine.
 
 | Table | Key | Status | Purpose |
 |---|---|---|---|
-| `nodes` | `id` (`tokyo01`) | M1 | identity, label, public `address`, the authored `config_json`, token hash, applied hash, last-seen, health, versions, last error |
+| `nodes` | `id` (`tokyo01`) | M1 | identity, label, public `address`, the agent-reported `reported_address`, the authored `config_json`, token hash, applied hash, last-seen, health, versions, last error |
 | `user_node_access` | `(username, node_id)` | M1 | node membership plus `allowed_inbounds`, `allowed_outbounds`, and the `uuids` map keyed by local outbound |
 | `reality_keys` | `(node_id, inbound_tag)` | M1 | panel-generated X25519 private keys; one per REALITY inbound, many allowed per node |
 | `users` | `username` | M1 | global identity: status, expiry, note |
@@ -297,6 +299,14 @@ Notes worth keeping in mind:
 - **JSON text columns are fine** at this scale, same reasoning as the
   archived panel: optimize when it hurts. No foreign keys — deletes are
   explicit (`db.delete_user` removes access rows first).
+- **The node's address is a domain decision; its report is a fact.**
+  `nodes.address` is optional and admin-set: the host share links point
+  at, blank when the admin has no domain yet (profiles can carry their
+  own client-facing hosts). `nodes.reported_address` (post-M5) is what
+  the node claims about itself at enroll — `detected_ip`, or the
+  edge-observed `CF-Connecting-IP` when the agent sends none — and it is
+  display data for the fleet view only. Links never fall back to it:
+  `funky.example.com` and `203.0.113.7` are different decisions.
 
 ## Trust boundaries
 
@@ -464,7 +474,9 @@ direct URI remains first.
 The direct view is derived from the inbound's `streamSettings` plus the
 node's `address` — `nodes.address` replaced the archived panel's global
 `SERVER_ADDRESS`, so two nodes produce different URIs for the same user
-and no environment variable is involved. Extra profiles are rows in
+and no environment variable is involved. It is optional and admin-set (a
+domain, normally): the agent-reported IP is display data for the fleet
+view and never becomes a link host. Extra profiles are rows in
 `link_profiles`, per-inbound because they describe a client-side view of
 that inbound — CDN fronting only makes sense for HTTP transports, so
 `xhttp` could have a `cdn` profile and `reality` cannot. Profile writes

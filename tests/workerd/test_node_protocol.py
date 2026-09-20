@@ -165,6 +165,55 @@ class NodeProtocolApi(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(response.json()["desired_hash"])
 
+    def test_enroll_records_reported_address_beside_the_domain(self):
+        """The agent's detected_ip is display data; the domain is untouched.
+
+        Why both assertions in one test: the whole point of
+        reported_address is to record the node's own view of its public
+        address without ever letting it become a share-link host — the
+        admin-set domain must survive every enroll.
+        """
+        self._make_node()
+        token = self._mint()
+
+        response = self.client.post(
+            "/api/node/enroll", headers=self._auth(token),
+            json={"protocol": 1, "detected_ip": "203.0.113.7"})
+        self.assertEqual(response.status_code, 200)
+
+        node = self.client.get(f"/api/admin/nodes/{self.node}").json()
+        self.assertEqual(node["address"], "funky.example.com")
+        self.assertEqual(node["reported_address"], "203.0.113.7")
+
+    def test_enroll_fills_reported_address_for_an_addressless_node(self):
+        """A node created without a domain still shows where it is."""
+        response = self.client.post("/api/admin/nodes", json={
+            "id": self.node, "label": "Node"})
+        assert response.status_code == 201, response.text
+        token = self._mint()
+
+        self.client.post("/api/node/enroll", headers=self._auth(token),
+                         json={"protocol": 1, "detected_ip": "203.0.113.7"})
+
+        node = self.client.get(f"/api/admin/nodes/{self.node}").json()
+        self.assertEqual(node["address"], "")
+        self.assertEqual(node["reported_address"], "203.0.113.7")
+
+    def test_reenroll_updates_the_reported_address_only(self):
+        """The latest report wins; the admin-set domain never moves."""
+        self._make_node()
+        token = self._mint()
+        headers = self._auth(token)
+        self.client.post("/api/node/enroll", headers=headers,
+                         json={"protocol": 1, "detected_ip": "203.0.113.7"})
+
+        self.client.post("/api/node/enroll", headers=headers,
+                         json={"protocol": 1, "detected_ip": "198.51.100.9"})
+
+        node = self.client.get(f"/api/admin/nodes/{self.node}").json()
+        self.assertEqual(node["reported_address"], "198.51.100.9")
+        self.assertEqual(node["address"], "funky.example.com")
+
     def test_unknown_protocol_is_an_explicit_400(self):
         self._make_node()
         token = self._mint()

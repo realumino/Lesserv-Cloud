@@ -13,7 +13,12 @@ from fastapi.responses import JSONResponse
 import db
 from models import EnrollIn, HeartbeatIn, ReportIn, StatsIn
 from routers.deps import conn
-from services import node_state_service, node_token_service, render_service
+from services import (
+    node_service,
+    node_state_service,
+    node_token_service,
+    render_service,
+)
 
 router = APIRouter(prefix="/api/node", tags=["node"])
 
@@ -61,15 +66,24 @@ async def require_node(
 
 
 @router.post("/enroll")
-async def enroll(payload: EnrollIn, node=Depends(require_node),
+async def enroll(payload: EnrollIn, request: Request, node=Depends(require_node),
                  connection=Depends(conn)):
     """First contact: record versions/liveness, return metadata + hash.
 
     Why idempotent: re-running enroll (e.g. after editing agent.toml) is
     the correct recovery action — it records the same facts and returns
     the same shape, converging rather than duplicating anything.
+
+    Why the reported address is recorded here: enroll is the one moment
+    the node states its own public address. It is display data for the
+    admin's fleet view, never a share-link host — that stays the
+    admin-set domain in nodes.address.
     """
     _unsupported_protocol(payload)
+    reported = node_service.reported_address_for(
+        payload.detected_ip, request.headers.get("cf-connecting-ip"))
+    if reported and reported != node["reported_address"]:
+        await db.set_reported_address(connection, node["id"], reported)
     at = node_state_service.now()
     values = {
         "last_seen": at,

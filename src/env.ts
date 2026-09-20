@@ -9,6 +9,8 @@
  * nothing here re-declares them.
  */
 
+import { base64ToBytes } from "./crypto";
+
 const REALITY_KEY_SECRET = "REALITY_KEY_SECRET";
 
 /**
@@ -29,16 +31,4 @@ export function secretBytes(env: Env): Uint8Array {
     );
   }
   return base64ToBytes(raw.trim().replace(/^\uFEFF/, ""));
-}
-
-/**
- * WHAT: decode standard base64 (with padding) into bytes.
- *
- * WHY atob and not a dependency: workerd ships it, the stored format is
- * standard base64 produced by Python's `base64.b64encode`, and the decode
- * must throw on malformed input rather than guess.
- */
-export function base64ToBytes(encoded: string): Uint8Array {
-  const binary = atob(encoded);
-  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }

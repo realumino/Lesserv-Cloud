@@ -210,9 +210,17 @@ fragment.
   generate/derive round-trips; Python-generated keys must derive the same
   public bytes in TS.
 - **AES-GCM:** `v1:` + standard base64 of `iv(12) || ciphertext+tag` under
-  `REALITY_KEY_SECRET`. Fixtures: Python-sealed ciphertext that TS must
-  decrypt, and (while Python still exists) TS-sealed ciphertext that Python
-  must decrypt; both pinned in tests.
+  `REALITY_KEY_SECRET`. Finding (TS3): the frozen `crypto.py` is a Pyodide
+  WebCrypto wrapper, so it cannot seal a fixture under CPython where
+  `python_fixtures.py` runs. The fixture therefore pins a published
+  AES-256-GCM vector (McGrew & Viega TC14, AES-256, no AAD) plus one
+  realistic sealed key, each cross-verified by pyca/cryptography and Node
+  WebCrypto before being recorded, with the `v1:` string built by Python's
+  own base64 encoder; the TS test re-verifies both through workerd's
+  WebCrypto. The live cross-language check moves to the Phase 6 staging
+  smoke: Python-sealed rows must keep decrypting after cutover, and a
+  TS-sealed row can be round-tripped through the still-deployed Python
+  plane.
 - **Node token:** `secrets.token_urlsafe(32)` equivalent
   (`crypto.getRandomValues(32)` -> base64url unpadded) and SHA-256 hex hash;
   constant-time compare hand-rolled (WebCrypto has no `timingSafeEqual`).

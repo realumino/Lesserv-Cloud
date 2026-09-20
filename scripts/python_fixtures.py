@@ -324,6 +324,73 @@ def build_node_token_fixture():
     return {"token": token, "sha256": hashlib.sha256(token.encode()).hexdigest()}
 
 
+# AES-256-GCM oracle values. The frozen Python `crypto.py` is a Pyodide
+# WebCrypto wrapper and cannot execute under CPython, so the fixture pins a
+# published vector plus one realistic sealed key instead of freshly sealing
+# under the frozen code. Both were verified with two independent
+# implementations before being recorded (pyca/cryptography and Node's
+# WebCrypto), and the TS test re-verifies them through workerd's WebCrypto.
+_STANDARD_KEY_HEX = (
+    "feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308"
+)
+_STANDARD_IV_HEX = "cafebabefacedbaddecaf888"
+_STANDARD_PLAINTEXT_HEX = (
+    "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a72"
+    "1c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b391aafd255"
+)
+_STANDARD_CIPHERTEXT_HEX = (
+    "522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa"
+    "8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662898015ad"
+)
+_STANDARD_TAG_HEX = "b094dac5d93471bdec1a502270e3cc6c"
+_SEALED_SECRET_B64 = "0YWCXqaomoiyK6u7hKPynnezUFEnB+tdXXD3bXiNVgA="
+_SEALED_IV_HEX = "4118ebf5f66a207c8deb1645"
+_SEALED_CIPHERTEXT_HEX = "7e58a832697f6518d615dec2f06164d7c02a4345bf17a6497091febec3bca5b481b06c084c483803e9e0925fcfc0708a537f48090ea9099f1e7d27"
+
+
+def v1_envelope(iv_hex, ciphertext_hex):
+    """Return Python's `v1:` storage envelope for one iv + ciphertext+tag.
+
+    WHY built here: the envelope rule (`v1:` + standard base64 of
+    iv(12) || ciphertext+tag) is the Python format the TS decryptor must
+    reproduce, so the fixture derives the stored string with Python's own
+    base64 encoder instead of embedding a pre-encoded copy.
+    """
+    raw = bytes.fromhex(iv_hex) + bytes.fromhex(ciphertext_hex)
+    return "v1:" + base64.b64encode(raw).decode()
+
+
+def build_crypto_fixture():
+    """Return the AES-GCM oracle: one published vector and one sealed key.
+
+    WHY the published vector: McGrew & Viega's GCM Test Case 14 (AES-256,
+    96-bit IV, no AAD) is external to both implementations, so it pins the
+    cipher, the IV placement, and the appended tag. WHY a realistic sealed
+    key too: it exercises the `key_cipher` path over a UTF-8 private key
+    under a base64 secret, exactly like production storage.
+    """
+    return {
+        "standard_vector": {
+            "name": "mcgrew-viega-2004-tc14-aes-256-gcm",
+            "key_hex": _STANDARD_KEY_HEX,
+            "iv_hex": _STANDARD_IV_HEX,
+            "plaintext_hex": _STANDARD_PLAINTEXT_HEX,
+            "ciphertext_hex": _STANDARD_CIPHERTEXT_HEX,
+            "tag_hex": _STANDARD_TAG_HEX,
+            "stored": v1_envelope(
+                _STANDARD_IV_HEX, _STANDARD_CIPHERTEXT_HEX + _STANDARD_TAG_HEX
+            ),
+        },
+        "sealed_key": {
+            "secret_b64": _SEALED_SECRET_B64,
+            "iv_hex": _SEALED_IV_HEX,
+            "ciphertext_hex": _SEALED_CIPHERTEXT_HEX,
+            "plaintext": FIXED_PRIVATE,
+            "stored": v1_envelope(_SEALED_IV_HEX, _SEALED_CIPHERTEXT_HEX),
+        },
+    }
+
+
 def share_config():
     """Return the config used by the share-link scenarios.
 
@@ -513,6 +580,7 @@ def build_fixtures():
         "python_uri.json": build_python_uri_fixture(),
         "x25519.json": build_x25519_fixture(),
         "node_token.json": build_node_token_fixture(),
+        "crypto.json": build_crypto_fixture(),
         "share_service.json": build_share_service_fixture(),
     }
 

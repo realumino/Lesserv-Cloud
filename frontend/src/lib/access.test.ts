@@ -18,7 +18,14 @@ import {
 } from "./access";
 
 function node(id: string, label = id): NodeOut {
-  return { id, label, address: "", created_at: 0, has_config: true };
+  return {
+    id,
+    label,
+    address: "",
+    reported_address: null,
+    created_at: 0,
+    has_config: true,
+  };
 }
 
 function user(access: UserOut["access"]): UserOut {

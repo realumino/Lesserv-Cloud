@@ -40,6 +40,9 @@ uv run python -m unittest discover -s tests/workerd -t .
 # 1. Schema: migrations apply cleanly to a fresh D1. (Local D1 for dev:)
 npx wrangler d1 migrations apply <d1-database-name> --local
 npx wrangler d1 migrations apply <d1-database-name> --remote
+#    Apply migrations BEFORE deploying a Worker that reads new columns —
+#    the app selects `*`, so a missing column turns every node query into
+#    a 500.
 
 # 2. Secret. Generate a fresh key only for a NEW deployment; rotating an
 #    existing one strands every stored key (they are unreadable without it).
@@ -132,12 +135,15 @@ npx wrangler d1 execute <d1-database-name> --remote --json `
 On the VPS running the node (e.g. `node1`), with the agent from
 the `Lesserv-Agent` repo already installed per its own installer:
 
-1. Create the node in the deployed plane and mint its token (shown once):
+1. Create the node in the deployed plane and mint its token (shown once).
+   The share-link domain is optional: set it on the node page after
+   creation (or pass `address` in the API call), and after the agent
+   enrolls the fleet shows the node's self-reported IP:
 
    ```powershell
    curl.exe -X POST https://cp.example.org/api/admin/nodes `
      -H "Content-Type: application/json" `
-     -d '{\"id\":\"node1\",\"label\":\"Node 1\",\"address\":\"node1.example.org\"}'
+     -d '{\"id\":\"node1\",\"label\":\"Node 1\"}'
    curl.exe -X POST https://cp.example.org/api/admin/nodes/node1/token
    # copy the "token" value — it is never shown again
    ```

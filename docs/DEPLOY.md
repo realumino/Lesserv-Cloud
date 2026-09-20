@@ -104,6 +104,20 @@ enroll → heartbeat → config fetch → report → sync) is pinned by
 `tests/workerd/test_node_protocol.py` locally; run it against the
 deployed plane with the same curl steps used for the M4 acceptance run.
 
+Verify the SPA after a deploy that changed `frontend/`:
+
+```
+# In a browser, after the Access login:
+#   /admin/nodes                 fleet renders every node with drift
+#   /admin/nodes/<id>/config     hard-refresh this deep link — it must render
+#   /admin/nodes/<id>/keys       REALITY keys, rotate
+#   /admin/users/new             per-node access sections, local tags only
+# A hard refresh is the point: the asset layer's SPA fallback is
+# navigation-only, so a deep link only renders when the browser sends
+# Sec-Fetch-Mode: navigate. A bare API-ish request to an unknown path
+# still 404s (fail closed), which is the behavior we want.
+```
+
 Verify the keys really are ciphertext in D1:
 
 ```powershell
@@ -159,6 +173,26 @@ the `Lesserv-Agent` repo already installed per its own installer:
 Token rotation invalidates immediately: re-minting means repeating steps
 1–2 (the agent keeps serving its current config until the new token is in
 place — PROTOCOL.md's "token rejected" behavior).
+
+## Point a second node at the deployed plane (M5, operator step)
+
+Adding node #2 takes the same three calls as node #1 and no code change on
+either side. The in-repo proof is `tests/workerd/test_two_nodes.py`; the
+live half needs a second machine.
+
+1. Create the second node in the fleet view (or with the same `POST
+   /api/admin/nodes` call) and paste its config on its Config tab.
+2. Mint its token on the node page and copy the plaintext once.
+3. On the second machine, install the agent (same `Lesserv-Agent`
+   installer) with `--cp <control-plane-url> --node <second-node-id>`, or
+   edit its `agent.toml`. Restart the service.
+4. Confirm the fleet view shows both nodes converging on their own
+   desired hashes, and that each node's Config/Keys/Users pages contain
+   only that node's data.
+
+Until a second machine exists, creating node2 in the plane and seeing it
+listed as `pending` in the fleet view is the available half of this check;
+convergence is the deferred part.
 
 ## Gotchas learned in M4
 

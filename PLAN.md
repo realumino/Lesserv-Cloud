@@ -26,7 +26,7 @@ Nothing is stored in qualified form. The qualified names exist only in the
 rendered artifact and in generated share links, which is why renaming a
 node id is a single row update rather than a migration.
 
-## Current status: M4 complete — the control plane is deployed
+## Current status: M5 complete — a two-node fleet and the real admin UI
 
 M1 recreated the archived panel's behavior with the `node` dimension
 wired in from the start: configs, REALITY keys, and per-user access are
@@ -77,16 +77,39 @@ Post-M4 cleanup — **workerd is the only runtime.** The local uvicorn
 entrypoint (`src/local.py`), the SQLite backend (`SqliteConn`), the
 in-app migration runner (`src/migrations.py`), and `key_cipher`'s
 plaintext fallback are deleted; `uvicorn`/`httpx` are out of the dev
-dependencies. Tests now run in two tiers: `tests/pure/` (pure modules,
-uv-venv interpreter, ~1s) and `tests/workerd/` (a real plane on a
-throwaway `--persist-to` D1, driven over HTTP with unique ids). 155
-tests pass (84 pure + 71 workerd); the deleted 46 lost their subject
-(SQLite conn semantics, the migration runner, the plaintext fallback)
-or were service-level duplicates of what the HTTP tests pin. A static
-AST test (`tests/pure/test_no_environment_compat.py`) fails the build if
+dependencies. Tests run in three tiers: `tests/pure/` (pure modules,
+uv-venv interpreter, ~1s), `tests/workerd/` (a real plane on a throwaway
+`--persist-to` D1, driven over HTTP with unique ids), and `frontend/`
+(vitest over the SPA's pure logic, plus `tsc --noEmit` as the type gate).
+The deleted SQLite/migration tests lost their subject; the remaining
+service-level duplicates were folded into the HTTP tests. A static AST
+test (`tests/pure/test_no_environment_compat.py`) fails the build if
 `src/` ever imports `sqlite3`, `uvicorn`, or module-scope `js`/`workers`
 again. The cross-repo agent E2E (`Lesserv-Agent`) launches the plane via
 `pywrangler dev` the same way.
+
+M5 made the fleet claim literal and replaced the placeholder SPA with the
+actual admin interface. Adding node #2 required no `src/` change:
+`tests/workerd/test_two_nodes.py` drives two fake agents through one plane
+and proves independent renders (different qualified tags and REALITY keys),
+independent apply/report (A settling leaves B drifted), that a user edit on
+A leaves B's desired hash byte-identical, and that A's valid token is 401 on
+every one of B's endpoints. `tests/workerd/test_admin_assets.py` pins the
+serving arrangement: the shell at `/admin/`, a deep link served the shell to
+a browser navigation, and an unknown non-navigation path still failing
+closed. The frontend is React + React Router + Tailwind v4 under
+`frontend/`, built by Vite at `base: '/admin/'`, type-gated by
+`tsc --noEmit`, and unit-tested with vitest over its pure logic (the
+authoritative access-form mapping, formatting, the fleet row join). Every
+page is a real URL, including the done-when's `/admin/nodes/tokyo01/config`;
+the user form edits access as per-node sections with local tags only, so the
+admin never types a qualified name, and the node detail page manages config,
+keys, users, and per-inbound link profiles. The API is unchanged,
+`PROTOCOL.md` stays frozen at `protocol: 1`, and Cloudflare Access still
+guards the whole surface. One operator item remains: pointing a second
+machine's agent at the deployed plane (deferred, like M4's VPS step). The
+executable plan and its decisions live in
+[`docs/M5-PLAN.md`](docs/M5-PLAN.md).
 
 | # | Milestone | Status |
 |---|-----------|--------|
@@ -95,7 +118,7 @@ again. The cross-repo agent E2E (`Lesserv-Agent`) launches the plane via
 | 2 | Qualifier + link profiles | done |
 | 3 | The agent, split out (systemd, pull over localhost) | done |
 | 4 | Control plane on Workers + D1 | done (agent-on-VPS run = operator step) |
-| 5 | Node #2 + the new frontend | not started |
+| 5 | Node #2 + the new frontend | done (second-machine run = operator step) |
 | 6 | Subscriptions | not started |
 | 7 | Stats + dashboard | not started |
 | 8 | Quota enforcement | not started |
@@ -214,6 +237,14 @@ is a real, refreshable URL.
 
 Adding node #2 must require no code change anywhere. If it does, M4's
 generality claim was wrong.
+
+Complete: the two-node proof is `tests/workerd/test_two_nodes.py`, the
+serving arrangement is pinned by `tests/workerd/test_admin_assets.py`, and
+the SPA is React + React Router + Tailwind v4 with a router and vitest pure
+tests. Link profiles gained minimal CRUD on the node detail page. The one
+remaining acceptance item is operator-run: install the agent on a second
+machine and watch both nodes converge in the deployed fleet view. The
+executable record is in [`docs/M5-PLAN.md`](docs/M5-PLAN.md).
 
 ### M6 — Subscriptions
 

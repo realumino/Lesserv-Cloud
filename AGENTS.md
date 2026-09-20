@@ -79,6 +79,11 @@ npx wrangler d1 migrations apply <d1-database-name> --local    # dev database sc
 npx wrangler d1 migrations apply <d1-database-name> --remote   # production schema
 uv run python -m unittest discover -s tests/pure -t . -v       # pure tests (~1s, no Node)
 uv run python -m unittest discover -s tests/workerd -t . -v    # black-box tests against a live plane (~30s)
+
+npm --prefix frontend install                                  # first time only
+npm --prefix frontend run dev                                  # Vite dev server, proxies /api to the local plane (:8787)
+npm --prefix frontend test                                     # frontend pure-logic tests (vitest, no DOM)
+npm --prefix frontend run build                                # tsc --noEmit + vite build -> frontend/dist
 ```
 
 The app runs **only** under workerd (`src/worker.py`, started by
@@ -99,10 +104,15 @@ current by every deploy that changes a step. Real values (hostname, D1
 name/id) go in a gitignored `wrangler.local.jsonc`, never in committed
 files.
 
-There is no real frontend yet — a placeholder SPA ships under
-`frontend/` (Vite, base `/admin/`) and is served from static assets; the
-SPA is rebuilt at M5 (`PLAN.md`); until then `/api/admin/*` is the
-interface. One entrypoint, one app: `src/worker.py`
+The admin SPA lives under `frontend/` (React + React Router + Tailwind
+v4, built by Vite with base `/admin/`) and is served from static assets;
+`/api/admin/*` is the frozen interface it is built on, and its pages are
+real routes (`/admin/nodes`, `/admin/nodes/:id/config`, ...). Its pure
+logic is unit-tested with vitest; the API is not reimplemented there.
+`frontend/dist/` is gitignored and produced by
+`npm --prefix frontend run build`; the workerd test tier writes a stub
+when it is absent, so tests do not require a build. One entrypoint, one
+app: `src/worker.py`
 (`asgi.entrypoint`, D1). The import root is `src/`, so imports
 inside the app are flat (`from core.x25519 import ...`); pure tests get
 the same root from the shim in `tests/__init__.py`. Evidence and

@@ -19,6 +19,15 @@ manage.
 | [`docs/PROTOCOL.md`](docs/PROTOCOL.md) | The cross-repo contract with `Lesserv-Agent` |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | The deploy runbook: D1, secret, Access applications, and post-deploy smoke checks |
 
+## Develop
+
+```powershell
+uv run pywrangler dev            # the plane + local D1 (needs a .dev.vars secret)
+npm --prefix frontend run dev    # Vite dev server; proxies /api to :8787
+npm --prefix frontend test       # frontend pure-logic tests (vitest)
+npm --prefix frontend run build  # typecheck + build the admin SPA to frontend/dist
+```
+
 ## Related repos
 
 - `Lesserv-Agent` — the node-side software. Pull, apply, restart, report.

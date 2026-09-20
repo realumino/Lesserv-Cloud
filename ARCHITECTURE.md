@@ -113,7 +113,7 @@ these shapes is in `docs/M0-FINDINGS.md`.
 
 ## How the tests run
 
-Two tiers, matching the two kinds of code:
+Three tiers, matching the three kinds of code:
 
 ```
 tests/pure/     imports pure modules (core/, pure services, models) and
@@ -124,6 +124,12 @@ tests/workerd/  boots a real plane (`pywrangler dev` on a throwaway
                 --persist-to D1 with a fresh REALITY_KEY_SECRET) and
                 drives it over HTTP — the same surface agents and admins
                 use. One server per run; unique ids per test; no resets.
+                It writes a stub frontend/dist when the SPA has not been
+                built, so the tier never requires Node.
+frontend/       `npm --prefix frontend test` runs vitest over the SPA's
+                pure logic (access-form rules, formatting, the fleet
+                row join) with no DOM; `npm --prefix frontend run build`
+                is `tsc --noEmit && vite build` and is the type gate.
 ```
 
 The split is the one-runtime rule applied to tests: app code that needs
@@ -191,6 +197,17 @@ sync warned and skipped.
 rotation, a future agent fetch — guarantees a stored key per REALITY
 inbound before anything is served. That is the archived panel's
 reasoning, now scoped to a node.
+
+**Independence is tested, not assumed.** Every input to a render is
+scoped by `(node_id, ...)`: the authored config, the access rows, and the
+keys. Two nodes therefore produce different qualified tags, different
+clients, and different REALITY keys even from identically-shaped authored
+configs. `tests/workerd/test_two_nodes.py` drives two fake agents through
+one plane and pins it: A's apply leaves B drifted, a user edit on A
+leaves B's desired hash byte-identical, and a valid token for A is 401 on
+every one of B's endpoints. Adding a node is one `POST /api/admin/nodes`
+with no code change anywhere — that is the M5 claim, and the reason the
+node dimension was in the schema from M1.
 
 ## The qualifier (M2)
 
@@ -319,8 +336,8 @@ the Worker, so those paths never reach the route guard — that is why the
 guard's four-prefix invariant survives the SPA. The assets sit behind the
 same Access application, and `/` is covered by it too (an Access bypass
 for path `/` would match every path, so the root is protected rather than
-public — see `docs/DEPLOY.md`). The app in the repo is a placeholder
-until M5 rebuilds it.
+public — see `docs/DEPLOY.md`). The real UI landed in M5; its shape is
+described in "The admin SPA (M5)" below.
 
 **Node.** 32 random bytes, base64url, minted via
 `POST /api/admin/nodes/{id}/token`, shown once at creation and stored
@@ -340,6 +357,53 @@ is a capability URL: whoever holds it is the user. That is the accepted
 model in this ecosystem, so the design work is bounding the blast radius —
 unguessable tokens, instant rotation, `Cache-Control: no-store`, and a body
 that contains nothing but the links.
+
+## The admin SPA (M5)
+
+`frontend/` is the real admin UI: React + React Router (v8) + Tailwind v4,
+built by Vite with `base: '/admin/'`, output to `frontend/dist/admin`, and
+served by the Workers asset layer. The build also copies the admin index to
+`dist/index.html`, because the asset layer's SPA fallback always serves the
+root index — that copy is what makes a deep link refreshable.
+
+Routes are the admin's state; every page is a real URL:
+
+| URL | Page |
+|---|---|
+| `/admin/nodes` | fleet: every node with drift, health, last-seen, last error |
+| `/admin/nodes/:id/config` | authored vs rendered config, save, hash, warnings |
+| `/admin/nodes/:id/keys` | panel-owned REALITY keys, rotate one or all |
+| `/admin/nodes/:id/users` | who may use this node |
+| `/admin/nodes/:id/profiles` | per-inbound link profiles (CRUD) |
+| `/admin/users`, `/admin/users/new`, `/admin/users/:username` | list and the per-node user form |
+
+Two behaviors are load-bearing:
+
+- **The SPA fallback is navigation-only.** `not_found_handling:
+  single-page-application` hands the root index to a browser navigation
+  (`Sec-Fetch-Mode: navigate`) whose path matched no asset, but an API-like
+  request without those headers still reaches the Worker and fails closed
+  with a 404. `tests/workerd/test_admin_assets.py` pins both halves —
+  otherwise "the deep link works" and "unknown paths 404" would quietly
+  contradict each other.
+- **The fleet view composes the node-scoped API.** It fetches the node list
+  and then one `/sync` per node; a failed sync leaves that row `unknown`
+  instead of blanking the table. There is no bulk drift endpoint and none is
+  needed at this scale.
+
+The user form is where the qualified-name rule reaches the UI: access is
+edited as one section per node, headed by the node's stored label and
+containing only that node's local tags. A submitted access map is
+authoritative — a node left unchecked loses its access row — so the pure
+rules live in `frontend/src/lib/access.ts` and are unit-tested with vitest.
+Qualified names (`reality-tokyo01`, `alice@tokyo01-niigata`) appear only in
+the read-only rendered config and generated links; the admin never types
+one.
+
+The SPA holds no secrets and owns no authentication: Cloudflare Access
+protects it, a node token is shown once in a dialog and never persisted,
+and an expired Access session surfaces as a non-JSON response that the API
+client reports as "session may have expired".
 
 ## Key custody
 
@@ -421,7 +485,8 @@ stored labels for nodes and profiles, and prettified names for local tags.
 Nothing stores a display name for a tag inside the opaque config, because
 that is state that rots the moment the pasted JSON changes. Since labels
 are cosmetic, renaming one never breaks a client — only a UUID change or a
-key rotation does. The same naming helper feeds any future UI, including M5.
+key rotation does. The same naming helper feeds the SPA: node and profile
+labels plus prettified local tags, with no display state stored anywhere.
 
 A **subscription** is the aggregation (M6): `/sub/{token}` returns base64
 of newline-joined URIs, covering every node the user is entitled to, each

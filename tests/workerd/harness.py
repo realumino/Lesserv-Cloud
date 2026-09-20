@@ -178,6 +178,7 @@ class Plane:
         self.base = f"http://127.0.0.1:{self.port}"
         self.secret = base64.b64encode(os.urandom(32)).decode()
         self.log_path = os.path.join(self.persist, "plane.log")
+        _ensure_assets()
         _apply_migrations(self.persist)
         self.proc = _start_server(self.persist, self.port, self.secret)
         atexit.register(self.stop)
@@ -194,6 +195,32 @@ class Plane:
         if getattr(self.proc, "_log", None):
             self.proc._log.close()
         shutil.rmtree(self.persist, ignore_errors=True)
+
+
+_STUB_INDEX = "<!doctype html><title>plane test stub</title>"
+
+
+def _ensure_assets():
+    """Write stub SPA indexes when frontend/dist is missing.
+
+    WHY: the committed wrangler config points its assets directory at
+    frontend/dist, which is gitignored and only exists after
+    `npm --prefix frontend run build`. wrangler refuses to boot when that
+    directory is absent, so a fresh clone could not run the workerd tier at
+    all; the stubs satisfy the config without shipping built assets. Both
+    the mirrored admin index (served at /admin/) and the root index (the
+    SPA fallback target) are written, so the asset tests exercise the
+    serving arrangement even before a real build. A real build overwrites
+    them, and the tests never assert on SPA bytes.
+    """
+    dist = os.path.join(REPO_ROOT, "frontend", "dist")
+    for index in (os.path.join(dist, "index.html"),
+                  os.path.join(dist, "admin", "index.html")):
+        if os.path.exists(index):
+            continue
+        os.makedirs(os.path.dirname(index), exist_ok=True)
+        with open(index, "w", encoding="utf-8") as handle:
+            handle.write(_STUB_INDEX)
 
 
 def _apply_migrations(persist):

@@ -12,11 +12,18 @@
  * links (e.g. /admin/nodes/tokyo01) would otherwise 404. The plugin
  * copies the built admin index to the assets root so the fallback serves
  * it, and clears any stale copy at build start.
+ *
+ * WHY the dev proxy targets :8787: the app runs only under workerd
+ * (`uv run pywrangler dev`), which defaults to 8787; the archived
+ * uvicorn port 8000 no longer exists.
  */
 import { copyFileSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
-import { defineConfig, type Plugin } from "vite";
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
+import { defineConfig } from "vitest/config";
+import type { Plugin } from "vite";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 
@@ -37,14 +44,18 @@ function spaFallback(): Plugin {
 
 export default defineConfig({
   base: "/admin/",
+  plugins: [react(), tailwindcss(), spaFallback()],
   build: {
     outDir: "dist/admin",
   },
   server: {
     proxy: {
-      "/api": "http://127.0.0.1:8000",
-      "/sub": "http://127.0.0.1:8000",
+      "/api": "http://127.0.0.1:8787",
+      "/sub": "http://127.0.0.1:8787",
     },
   },
-  plugins: [spaFallback()],
+  test: {
+    environment: "node",
+    include: ["src/**/*.test.ts"],
+  },
 });

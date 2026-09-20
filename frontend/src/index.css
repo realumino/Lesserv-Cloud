@@ -1,0 +1,35 @@
+/*
+ * Tailwind v4 is CSS-first: the import brings the framework and @theme
+ * defines the design tokens.
+ *
+ * WHY the tokens live here and not in a tailwind.config.js: v4 made the
+ * CSS file the primary source of theme configuration, and the archived
+ * panel's `apple-*` palette ported straight across as custom colors.
+ *
+ * WHY the system font stack: the archived panel loaded DM Sans from a
+ * Google Fonts CDN, which is an external request and a flash of unstyled
+ * text; the admin UI does not need a custom face.
+ */
+@import "tailwindcss";
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --color-apple-bg: #f2f2f7;
+  --color-apple-card: #ffffff;
+  --color-apple-border: #e5e5ea;
+  --color-apple-text: #1d1d1f;
+  --color-apple-muted: #6e6e73;
+  --color-apple-blue: #007aff;
+  --color-apple-blue-hover: #0064d6;
+  --color-apple-green: #34c759;
+  --color-apple-red: #ff3b30;
+  --color-apple-gray: #8e8e93;
+  --color-apple-gray-surface: #f7f7fa;
+}
+
+@layer base {
+  body {
+    @apply bg-apple-bg text-apple-text antialiased;
+  }
+}

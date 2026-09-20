@@ -1,67 +1,37 @@
 """All database access lives behind this module.
 
-Two backends, one interface. Every function in this file speaks the same
-tiny protocol — `await conn.execute(sql, params) -> list[dict]` — and the
-caller never knows which backend is underneath:
+D1 is the only backend, and this file is the only place it is spoken to.
+Every function here speaks one tiny protocol —
+`await conn.execute(sql, params) -> list[dict]` — and callers never see
+the D1 binding itself.
 
-- `SqliteConn`: local dev and tests (uvicorn, TestClient). Wraps the
-  synchronous `sqlite3` module in an async facade so call sites are
-  identical to the D1 path.
-- `D1Conn`: the Worker runtime. Thin wrapper over the D1 binding obtained
-  from `request.scope["env"].DB`.
-
-Why async even on SQLite: D1 has no synchronous API, so db functions must
-be `async def` in production. Making the local backend satisfy the same
-awaitable interface is what lets M4 swap bodies without touching
-signatures, routers, or services. The asymmetry is the convention: pure
-code (core/, services' pure helpers) stays synchronous; anything that
-touches a conn is `async def`.
+Why async everywhere: D1 has no synchronous API, so db functions must be
+`async def` in production. The asymmetry is the convention, not an
+accident: pure code (core/, services' pure helpers) stays synchronous;
+anything that touches a conn is `async def`.
 
 Why this is the only file containing SQL: the data model lives in
-`migrations/*.sql`, but every query that reads or writes it lives here, so
-M4's D1 port changes bodies in one file and nothing else.
+`migrations/*.sql`, but every query that reads or writes it lives here,
+so schema and access patterns are findable in exactly two places.
+
+There is no second backend and no fallback: the app runs under workerd,
+and outside a Worker there is no database — `get_conn` raises rather
+than pretend. (tests/workerd runs the real plane; tests/pure only ever
+touches pure modules that never see a conn.)
 """
 
 import json
-import os
-import sqlite3
 
 _ACCESS_JSON_COLS = ("allowed_inbounds", "allowed_outbounds", "uuids")
 _PROFILE_JSON_COLS = ("overrides",)
 
 
-class SqliteConn:
-    """Async facade over a synchronous sqlite3 connection.
-
-    Why check_same_thread=False: FastAPI runs endpoints in a worker
-    thread pool; a connection opened in the lifespan gets used from other
-    threads (and from TestClient's portal thread). SQLite normally
-    refuses that; this flag allows it. Safe because the panel is a
-    single, low-traffic process — same reasoning as the archived panel.
-    """
-
-    def __init__(self, path: str):
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        self._conn = sqlite3.connect(path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-
-    async def execute(self, sql: str, params=()) -> list[dict]:
-        """Run one statement and return all rows as plain dicts."""
-        cur = self._conn.execute(sql, params)
-        rows = [dict(row) for row in cur.fetchall()]
-        self._conn.commit()
-        return rows
-
-    async def close(self):
-        self._conn.close()
-
-
 class D1Conn:
     """Async facade over a D1 binding (`env.DB`).
 
-    Why a wrapper at all: D1 returns JsProxy objects through the Pyodide
-    FFI; converting to plain Python dicts here (`.to_py()`) keeps every
-    caller free of FFI details, exactly like `sqlite3.Row` handling above.
+    Why a wrapper at all: D1 results arrive through the Pyodide FFI as
+    JsProxy-backed objects; normalizing to plain Python dicts here keeps
+    every caller free of FFI details.
     """
 
     def __init__(self, binding):
@@ -83,22 +53,23 @@ class D1Conn:
 
 
 def get_conn(request):
-    """Return the backend-agnostic conn for this request.
+    """Return the D1 conn for this request, or fail loudly elsewhere.
 
-    Why the two-branch lookup: locally the conn was attached to app.state
-    by local.py's lifespan; on Workers the ASGI bridge puts the bindings
-    object on the ASGI scope as `env`, and the D1 binding is `env.DB`.
+    Why the request scope: the ASGI bridge (`workers.asgi`) puts the
+    bindings object on the ASGI scope as `env`, and the D1 binding is
+    `env.DB`. There is no second backend and no dev substitute — a
+    request without the binding means the app was not started by
+    workerd, which is a bug worth a loud error, not a fallback.
     Routers call this as a dependency and pass the result to db
-    functions, so no router ever knows which backend is live.
+    functions, so no router ever touches the binding itself.
     """
-    conn = getattr(getattr(request, "app", None), "state", None)
-    conn = getattr(conn, "conn", None)
-    if conn is not None:
-        return conn
     env = request.scope.get("env")
     if env is not None and hasattr(env, "DB"):
         return D1Conn(env.DB)
-    raise RuntimeError("no database handle: run via local.py or worker.py")
+    raise RuntimeError(
+        "no D1 binding on the request: the app runs only under workerd "
+        "(uv run pywrangler dev)"
+    )
 
 
 def row_to_dict_with_json(row: dict, json_cols) -> dict:

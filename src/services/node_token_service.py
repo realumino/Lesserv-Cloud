@@ -6,7 +6,7 @@ key), so the rules — high-entropy random, hash-at-rest, constant-time
 compare, shown once — live in one audited place, not scattered across
 routers. All functions are synchronous and pure except `mint_token`,
 which draws entropy and therefore must only run inside request handlers
-(see tests/test_import_hygiene.py).
+(see tests/pure/test_import_hygiene.py).
 """
 
 import hashlib

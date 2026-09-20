@@ -1,9 +1,8 @@
 """Build the filled runtime Xray config from the user config and users.
 
 Why this exists: turning DB users into `settings.clients` and
-`routing.rules` is a pure transformation — no files, no subprocesses, no
-SQLite — so it can be unit-tested with plain dicts. xray_service owns the
-I/O around it.
+`routing.rules` is a pure transformation — no bindings, no I/O — so it
+runs identically under Pyodide and is unit-tested with plain dicts.
 """
 
 import copy

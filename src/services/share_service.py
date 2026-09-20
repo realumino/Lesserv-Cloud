@@ -115,8 +115,8 @@ def _security_params(inbound, reality_keys=None):
     """Build security query params and any warnings for an inbound.
 
     Why the private key comes from `reality_keys` when available: the
-    panel owns realitySettings.privateKey (stored in SQLite, injected at
-    sync), so the config file's copy may be stale or a placeholder.
+    panel owns realitySettings.privateKey (stored sealed in D1, injected
+    at render), so the config file's copy may be stale or a placeholder.
     Deriving `pbk` from the panel's key is what makes links match what
     Xray actually serves. The config value remains the fallback so pure
     callers without a database still work.

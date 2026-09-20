@@ -1,10 +1,11 @@
-"""The FastAPI application shared by both runtimes.
+"""The FastAPI application.
 
-Why one app object: the whole M0 verdict hangs on the claim that the same
-`app` runs under uvicorn (local dev, tests) and inside a Worker (workerd).
-This module must therefore never import platform-specific things: no
-`sqlite3`, no `js` module, no D1. Those live in `local.py` and `worker.py`,
-which each import this `app` and attach what their runtime provides.
+Why this module is platform-neutral: the app runs only under workerd
+(src/worker.py, via the `workers.asgi` bridge), but the module itself
+must stay importable and side-effect free everywhere — deploy-time
+snapshots run the top-level scope, and pure tests import it. So no
+`sqlite3`, no `js` module, no D1 here: those arrive at request time
+through the bindings object on the ASGI scope (see db.py).
 """
 
 from fastapi import FastAPI
@@ -29,7 +30,7 @@ async def route_group_guard(request, call_next):
 
 
 def create_app() -> FastAPI:
-    """Build the app object both entrypoints share.
+    """Build the app object the Worker serves.
 
     Why a factory instead of a bare module-level `app`: it keeps the
     import of this module side-effect free, which matters under Workers

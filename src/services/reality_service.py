@@ -11,10 +11,10 @@ only by explicit rotation (which breaks every client using the old key —
 hence it must be a deliberate operator action, never an automatic side
 effect of a render).
 
-M4 note: keys are stored via `key_cipher` — `v1:` AES-GCM ciphertext when
-the Worker secret exists, plaintext outside workerd (local dev, tests).
-Decryption has exactly one seam (`key_map`/`unseal`), so the render and
-link paths always see the usable key while storage never does.
+Keys are always stored via `key_cipher` as `v1:` AES-GCM ciphertext under
+the Worker secret; there is no plaintext mode. Decryption has exactly one
+seam (`key_map`/`unseal`), so the render and link paths always see the
+usable key while storage never does.
 """
 
 import time

@@ -12,11 +12,11 @@ from db import get_conn
 
 
 def conn(request: Request):
-    """FastAPI dependency: resolve the backend-agnostic conn for this request.
+    """FastAPI dependency: resolve the D1 conn for this request.
 
     Why a wrapper instead of Depends(db.get_conn): the Request annotation
     is what tells FastAPI this parameter is the request object; keeping
     that annotation here means db.py imports nothing from the HTTP layer,
-    while every router gets the same backend-agnostic conn.
+    while every router gets the same conn (resolved from scope["env"]).
     """
     return get_conn(request)

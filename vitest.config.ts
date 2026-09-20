@@ -19,7 +19,13 @@ export default defineConfig({
         wrangler: { configPath: "./wrangler.jsonc" },
         miniflare: {
           bindings: { TEST_MIGRATIONS: migrations },
-          assets: { directory: "tests/stub-assets" },
+          // WHY the binding is declared here and not in wrangler.jsonc:
+          // the committed config never fetches assets from the Worker, so
+          // it relies on the default (absent) binding. The asset tests
+          // need one to reach the assets service; keeping it in the test
+          // harness leaves the deployed config untouched. See
+          // tests/workerd/admin_assets.test.ts.
+          assets: { directory: "tests/stub-assets", binding: "ASSETS" },
         },
       };
     }),

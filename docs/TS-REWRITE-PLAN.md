@@ -467,6 +467,18 @@ Work:
 
 Verify: `npm test` twice in a row, `npm run typecheck`, `npm run build`.
 
+Finding (TS5): `@cloudflare/vitest-plugin` v1.1.13 exposes no
+`createTestHarness`, and its `ASSETS` binding reaches the assets service
+directly, not the edge's assets router (which is what forwards a
+non-navigation miss to the Worker). The committed wrangler config has no
+assets binding at all — the deployed Worker never fetches assets — so the
+shell and deep-link-navigation assertions run through a test-only `ASSETS`
+binding declared in `vitest.config.ts`, and the fail-closed assertion runs
+through the Worker, which is where the router sends that miss. All three
+assertions survive; only the third reaches them by a different route than
+the Python harness. 44 tests landed across the five files (216 total in the
+suite).
+
 ### Phase 6 — Pre-cutover audit, cutover, Python removal, docs (size L)
 
 Files: `scripts/hash_audit.ts` (or `.mjs`), `docs/ARCHITECTURE.md`,

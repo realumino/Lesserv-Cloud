@@ -18,6 +18,7 @@ import { adminNodes } from "./routers/admin_nodes";
 import { adminReality } from "./routers/admin_reality";
 import { adminUsers } from "./routers/admin_users";
 import { health } from "./routers/health";
+import { nodeApi } from "./routers/node";
 
 export const app = new Hono<{ Bindings: Env }>();
 
@@ -66,3 +67,4 @@ app.route("/", adminNodes);
 app.route("/", adminLinkProfiles);
 app.route("/", adminUsers);
 app.route("/", adminReality);
+app.route("/", nodeApi);

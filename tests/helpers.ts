@@ -35,3 +35,15 @@ export function testMigrations(): D1Migration[] {
   return (env as typeof env & { TEST_MIGRATIONS: D1Migration[] })
     .TEST_MIGRATIONS;
 }
+
+/**
+ * WHAT: return a unique lowercase alphanumeric id for one test's data.
+ *
+ * WHY random suffixes: the integration tier shares one D1 (the vitest
+ * plugin has no per-test storage isolation), so ids must not collide
+ * between tests or between runs. Node ids must be 1-32 chars of
+ * `[a-z0-9]` — no hyphens — and hex is safe for usernames too.
+ */
+export function uid(prefix = ""): string {
+  return prefix + crypto.randomUUID().replaceAll("-", "").slice(0, 8);
+}

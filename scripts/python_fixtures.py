@@ -312,6 +312,18 @@ def build_x25519_fixture():
     }
 
 
+def build_node_token_fixture():
+    """Return one deterministic token and its Python-computed SHA-256 hash.
+
+    WHY deterministic: minting is random, so a fixed digest (in the same
+    base64url-unpadded shape `token_urlsafe(32)` produces) is what backs a
+    `--check`-able fixture. The TS `verifyToken` must accept this hash.
+    """
+    token_bytes = hashlib.sha256(b"lesserv-fixture-token").digest()
+    token = base64.urlsafe_b64encode(token_bytes).decode().rstrip("=")
+    return {"token": token, "sha256": hashlib.sha256(token.encode()).hexdigest()}
+
+
 def share_config():
     """Return the config used by the share-link scenarios.
 
@@ -500,6 +512,7 @@ def build_fixtures():
         "python_json.json": build_python_json_fixture(),
         "python_uri.json": build_python_uri_fixture(),
         "x25519.json": build_x25519_fixture(),
+        "node_token.json": build_node_token_fixture(),
         "share_service.json": build_share_service_fixture(),
     }
 

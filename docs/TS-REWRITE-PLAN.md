@@ -232,9 +232,11 @@ One command, `npm test`, runs the whole suite inside workerd via
 - **Integration tier** (`tests/workerd/*.test.ts`): imports
   `exports.default` and drives it with `fetch()`; reads D1 through `env.DB`
   for invariants the HTTP surface cannot see (sealed keys). Migrations are
-  applied once via `readD1Migrations` + `applyD1Migrations` in a setup file;
-  per-test storage isolation makes unique ids optional (keep them: they make
-  failures readable).
+  applied once via `readD1Migrations` + `applyD1Migrations` in a setup file.
+  Finding (TS2): `@cloudflare/vitest-plugin` v1.1 has no per-test storage
+  isolation — one D1 is shared across the tests in a file — so unique ids
+  (`tests/helpers.ts:uid`) are required, exactly like the Python harness,
+  not merely nicer failures.
 - **Fixtures** (`tests/fixtures/`): Python-generated oracle vectors for
   canonical JSON, URIs, and key/token bytes.
 - **Assets** (`tests/workerd/test_admin_assets.test.ts`): the plugin's

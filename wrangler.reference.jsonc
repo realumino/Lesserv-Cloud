@@ -1,0 +1,35 @@
+// Temporary during the TS rewrite (Phase 0..6): the frozen Python entrypoint.
+//
+// WHY this file exists: the port is big-bang, and the Python plane is the
+// oracle until the cutover. Keep it bootable for parallel renders and
+// behavior questions:
+//
+//   uv run pywrangler dev --port 8788 --config wrangler.reference.jsonc
+//
+// It is deleted, together with src/**/*.py, when the TS plane passes the
+// Phase 6 hash audit and smoke test.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "lesserv-cloud",
+  "main": "src/worker.py",
+  // compatibility_date >= 2026-09-08 selects Python 3.14 via pywrangler; if
+  // packages misbehave, pin 3.13 by adding "python_workers_20250116".
+  "compatibility_date": "2026-09-17",
+  "compatibility_flags": ["python_workers"],
+  "workers_dev": false,
+  "routes": [{ "pattern": "cp.example.org", "custom_domain": true }],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "lesserv",
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "assets": {
+    "directory": "./frontend/dist",
+    "not_found_handling": "single-page-application"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

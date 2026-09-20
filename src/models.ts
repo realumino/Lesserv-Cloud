@@ -350,6 +350,78 @@ export const StatsIn = z.object({
 });
 export type StatsIn = z.infer<typeof StatsIn>;
 
+/**
+ * WHAT: the error a router throws for a non-2xx `{detail}` response.
+ *
+ * WHY one class: Python raised `HTTPException(status, detail)` everywhere
+ * and one exception handler rendered the envelope; the port keeps that
+ * single seam. `detail` is a string for semantic errors and a list (of
+ * `{msg}` objects or strings) for validation errors, exactly the body
+ * `frontend/src/api.ts` already parses. The class lives here because it is
+ * part of the API contract the schemas describe.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly detail: unknown;
+
+  constructor(status: number, detail: unknown) {
+    super(typeof detail === "string" ? detail : "request failed");
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+/**
+ * WHAT: parse and validate a JSON request body, or throw the 422 envelope.
+ *
+ * WHY here and not per router: the malformed-JSON catch and the Zod-issue
+ * formatting are identical for every endpoint, and FastAPI rendered both
+ * as `{detail: [{msg: ...}]}`. Non-JSON bodies are a 422 with the same
+ * message FastAPI used, so the SPA's error line never changes.
+ */
+export async function parseJsonBody<S extends z.ZodType>(
+  request: Request,
+  schema: S,
+): Promise<z.output<S>> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    throw new ApiError(422, [{ msg: "JSON decode error" }]);
+  }
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) {
+    throw new ApiError(
+      422,
+      parsed.error.issues.map((issue) => ({ msg: issue.message })),
+    );
+  }
+  return parsed.data;
+}
+
+/**
+ * WHAT: parse an arbitrary JSON object body (the opaque node config).
+ *
+ * WHY separate from `parseJsonBody`: the config is deliberately schema-less;
+ * only "a JSON object" is required, matching FastAPI's `dict` body type.
+ * Everything else (arrays, scalars, null) is the same 422 as Python.
+ */
+export async function parseJsonObject(
+  request: Request,
+): Promise<Record<string, unknown>> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    throw new ApiError(422, [{ msg: "JSON decode error" }]);
+  }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    throw new ApiError(422, [{ msg: "Input should be a valid dictionary" }]);
+  }
+  return body as Record<string, unknown>;
+}
+
 /** WHAT: response for GET /api/admin/nodes/{node_id}/sync: drift at a glance. */
 export const NodeSyncOut = z.object({
   node_id: z.string(),

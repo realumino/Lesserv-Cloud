@@ -25,6 +25,26 @@ export function planeFetch(path: string, init?: RequestInit): Promise<Response> 
 }
 
 /**
+ * WHAT: fetch one path with an optional JSON body.
+ *
+ * WHY a helper: the Python harness's client spoke `post(path, json=...)`,
+ * and every ported admin test uses that shape. A missing body means a
+ * bodyless request (GET, DELETE), not the string "undefined".
+ */
+export function planeJson(
+  method: string,
+  path: string,
+  body?: unknown,
+  headers?: Record<string, string>,
+): Promise<Response> {
+  return planeFetch(path, {
+    method,
+    headers: { "Content-Type": "application/json", ...headers },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+/**
  * WHAT: return the migrations the vitest config injected as a binding.
  *
  * WHY a cast: TEST_MIGRATIONS exists only in tests (miniflare bindings),

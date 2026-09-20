@@ -431,6 +431,23 @@ Work:
 
 Verify: `npm test`.
 
+Finding (TS4): the render-dependent half of `node_state_service`
+(`desiredHash`, `syncState`) landed in this phase rather than Phase 5,
+because the admin sync endpoint is part of the render surface and
+`test_render` asserts through it. The render path is async end to end:
+WebCrypto's digest is the only SHA-256 in workerd, so `config_hash` is a
+promise, and every caller was already async. Porting the malformed-config
+catch needed an explicit shape probe: Python's `inbound.get(...)` raised
+AttributeError on any non-dict entry, while JS property access on
+primitives never throws, so `{"inbounds": "oops"}` would have rendered
+garbage instead of warning; `render_service.assertRenderableShape`
+restates the requirement and the render catch stays TypeError-only.
+Validation bodies are parsed by `models.ts` (`ApiError` + `parseJsonBody`
+/ `parseJsonObject`) and rendered by `main.ts`'s `onError` — the port of
+FastAPI's single exception handler; `ApiError` is thrown from handlers so
+routers read like their Python originals. 41 integration tests ported
+(172 total in the suite).
+
 ### Phase 5 — Node protocol, sync, two-node proof (size L)
 
 Files: `src/routers/node.ts`, `src/services/node_state_service.ts`

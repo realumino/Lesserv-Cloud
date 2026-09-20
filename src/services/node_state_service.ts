@@ -6,15 +6,12 @@
  * applied hash on failure, and the admin sync view must combine a live
  * render with stored facts. Routers do HTTP; `db` does SQL; the decisions
  * live here. Pure helpers stay synchronous so they unit-test without a
- * database.
- *
- * The render-dependent half (`desiredHash`, `syncState`) lands with
- * `render_service`, because drift is desired-vs-applied and desired needs
- * the render pipeline.
+ * database; the drift view is async because it renders live.
  */
 
 import * as db from "../db";
-import type { HeartbeatIn, ReportIn } from "../models";
+import type { HeartbeatIn, NodeSyncOut, ReportIn } from "../models";
+import { configHash, desiredConfig } from "./render_service";
 
 export const HEARTBEAT_STALE_AFTER = 60;
 export const SUCCESS_STAGES = ["applied", "started"] as const;
@@ -153,4 +150,53 @@ export async function touchFromValues(
     values.last_error,
     values.applied_hash,
   );
+}
+
+/**
+ * WHAT: return `[hex hash | null, warnings]` of one node's desired config.
+ *
+ * WHY None instead of raising: no config and malformed config are states
+ * the agent must ride out calmly — the heartbeat carries null and the agent
+ * changes nothing.
+ */
+export async function desiredHash(
+  env: Env,
+  nodeId: string,
+): Promise<[string | null, string[]]> {
+  const [runtime, warnings] = await desiredConfig(env, nodeId);
+  if (runtime === null) {
+    return [null, warnings];
+  }
+  return [await configHash(runtime), warnings];
+}
+
+/**
+ * WHAT: return the NodeSyncOut-shaped drift view for one node, or null.
+ *
+ * WHY the render happens here: drift is desired-vs-applied, and desired is
+ * a pure function of current database state — computing it live means the
+ * view can never go stale the way a stored column would.
+ */
+export async function syncState(
+  env: Env,
+  nodeId: string,
+): Promise<NodeSyncOut | null> {
+  const node = await db.getNode(env.DB, nodeId);
+  if (node === null) {
+    return null;
+  }
+  const [wanted, warnings] = await desiredHash(env, nodeId);
+  return {
+    node_id: nodeId,
+    state: node.last_seen !== null ? "active" : "pending",
+    desired_hash: wanted,
+    applied_hash: node.applied_hash,
+    in_sync: wanted !== null && node.applied_hash === wanted,
+    last_seen: node.last_seen,
+    health: node.health,
+    agent_version: node.agent_version,
+    xray_version: node.xray_version,
+    last_error: node.last_error,
+    warnings,
+  };
 }

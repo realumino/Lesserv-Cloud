@@ -74,12 +74,21 @@ These were settled deliberately; do not relitigate them in passing.
 ## Run it
 
 ```
-uv run pywrangler dev                              # the Worker + local D1, no CF account needed
-uv run uvicorn local:app --app-dir src --reload    # the same app for local tests/dev (SQLite, no D1)
-uv run python -m unittest discover -s tests -t . -v  # tests
-npx wrangler d1 migrations apply <d1-database-name> --local   # dev database
-npx wrangler d1 migrations apply <d1-database-name> --remote  # production
+uv run pywrangler dev                                          # the Worker + local D1, no CF account needed
+npx wrangler d1 migrations apply <d1-database-name> --local    # dev database schema
+npx wrangler d1 migrations apply <d1-database-name> --remote   # production schema
+uv run python -m unittest discover -s tests/pure -t . -v       # pure tests (~1s, no Node)
+uv run python -m unittest discover -s tests/workerd -t . -v    # black-box tests against a live plane (~30s)
 ```
+
+The app runs **only** under workerd (`src/worker.py`, started by
+`pywrangler dev`); there is no second entrypoint and no SQLite backend.
+Tests reflect that: `tests/pure/` imports only pure modules under the
+uv-venv interpreter (they run identically in Pyodide), and
+`tests/workerd/` boots a real plane on a throwaway `--persist-to` D1 and
+talks HTTP to it. Dev needs a `.dev.vars` with `REALITY_KEY_SECRET` (see
+`.dev.vars.example`) — without it, every REALITY key endpoint fails
+loudly by design.
 
 Since M4 the deployed plane is the real thing: a Python Worker + D1 +
 Access + static assets (hostname and resource ids are operator-specific
@@ -93,13 +102,11 @@ files.
 There is no real frontend yet — a placeholder SPA ships under
 `frontend/` (Vite, base `/admin/`) and is served from static assets; the
 SPA is rebuilt at M5 (`PLAN.md`); until then `/api/admin/*` is the
-interface. Two entrypoints,
-one app: `src/worker.py` (`asgi.entrypoint`, D1) and `src/local.py`
-(uvicorn + SQLite). The import root is `src/`, so imports
-inside the app are flat (`from core.x25519 import ...`); uvicorn needs
-`--app-dir src` and tests get the same root from the shim in
-`tests/__init__.py`. Evidence and constraints from the M0 spike:
-`docs/M0-FINDINGS.md`.
+interface. One entrypoint, one app: `src/worker.py`
+(`asgi.entrypoint`, D1). The import root is `src/`, so imports
+inside the app are flat (`from core.x25519 import ...`); pure tests get
+the same root from the shim in `tests/__init__.py`. Evidence and
+constraints from the M0 spike: `docs/M0-FINDINGS.md`.
 
 ## Conventions (user requirement — non-negotiable)
 
@@ -113,31 +120,31 @@ inside the app are flat (`from core.x25519 import ...`); uvicorn needs
 
 ## Gotchas
 
+- **workerd is the only runtime; there is no compatibility path.** The app
+  executes only inside workerd/Pyodide. `src/` must never grow branches
+  that exist for another environment (no `sqlite3`, no uvicorn, no
+  plaintext fallbacks outside workerd) — `tests/pure/test_no_environment_compat.py`
+  enforces it. Anything that needs bindings, HTTP, or the database is
+  tested black-box in `tests/workerd/`.
 - **Pure is sync, I/O is async.** `core/` and the pure services
   (`qualify_service`, `config_service`, `share_service`) are ordinary
   synchronous Python — they compute dicts. Anything touching D1 is `async`
   and must be awaited: D1 has no synchronous API, so every router and
   service that reads or writes is `async def`. That asymmetry is the
-  convention, not an accident. (M0 made it concrete: the local
-  `SqliteConn` satisfies the same awaited `execute()` interface, so
-  `db.py` signatures survive the D1 port unchanged.)
+  convention, not an accident.
 - **No entropy at import time.** Cloudflare poisons the PRNG before the
   deploy-time memory snapshot; `os.urandom`/`uuid4` in top-level scope
   fails the deploy. Key generation and UUID minting happen inside request
-  handlers only — `tests/test_import_hygiene.py` enforces it.
+  handlers only — `tests/pure/test_import_hygiene.py` enforces it.
 - **FFI conversions are explicit.** `bytes` needs an explicit
   `Uint8Array`, and lists passed to WebCrypto (e.g. `keyUsages`) must be
   real JS Arrays via `to_js`. Keep `from js import ...` inside functions:
-  under CPython that import raises, and only `crypto.py` may touch it.
-- **Workers have no filesystem that persists, and no subprocess.**
-  `db.py` is the only file containing SQL, and it talks to D1 through
-  bindings (`import sqlite3` itself works under Pyodide, but a SQLite
-  file there is useless — the filesystem is ephemeral and per-isolate).
-  The archived panel's `xray_service.py` has no counterpart here —
-  process management is entirely the agent's job.
-- **The same `app` object must run under both uvicorn and Workers.** If
-  something only works in one of them, it's a bug in the app, not a
-  platform quirk to work around.
+  outside workerd that import raises, and only `crypto.py` may touch it.
+- **Workers have no filesystem that persists, and no subprocess.** `db.py`
+  is the only file containing SQL, and it talks to D1 through bindings
+  (the local `pywrangler dev` D1 is real D1 semantics on disk). The
+  archived panel's `xray_service.py` has no counterpart here — process
+  management is entirely the agent's job.
 - **Never store a qualified tag.** Tags are local and scoped by
   `(node_id, tag)`. If you find yourself writing `tokyo01-niigata` to the
   database, the design is being violated.

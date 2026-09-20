@@ -1,0 +1,9 @@
+# Example dev secrets for `pywrangler dev` and the workerd test tier.
+# Copy to .dev.vars and replace the placeholder:
+#     cp .dev.vars.example .dev.vars
+# REALITY_KEY_SECRET is base64 of 32 bytes (the AES-256-GCM key for REALITY
+# private keys). Generate a fresh one for real dev use:
+#     uv run python -c "import os,base64; print(base64.b64encode(os.urandom(32)).decode())"
+# There is no plaintext fallback: without this secret, every REALITY key
+# endpoint fails loudly. Never commit the real .dev.vars.
+REALITY_KEY_SECRET=base64-of-32-random-bytes

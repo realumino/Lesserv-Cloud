@@ -74,47 +74,64 @@ requests flow **down only** (router → service → db, never reverse), and a
 module never knows about the layer above it. `db.py` has no idea HTTP
 exists; routers have no idea SQL exists.
 
-## Two entrypoints, one app
+## One entrypoint, one runtime
 
-The same `app` object (`src/main.py`) runs in two places, and that is a
-tested property, not an aspiration:
+The app runs in exactly one place: workerd. There is no second entrypoint
+and no environment-conditional code — a test in `tests/pure/`
+(`test_no_environment_compat.py`) fails the build if `src/` ever imports
+`sqlite3`, `uvicorn`, or module-scope `js`/`workers` outside the
+entrypoint.
 
 ```
 src/main.py      create_app() — routes, the route-group guard, nothing platform-specific
-src/local.py     imports app, attaches SQLite to app.state, serves via uvicorn
 src/worker.py    imports app, serves via workers.asgi (D1 arrives on the request scope)
 ```
 
-The piece that makes one app serve both backends is the **conn
-interface**: `await conn.execute(sql, params) -> list[dict]`. Locally,
-`SqliteConn` wraps `sqlite3` (and commits, so tests see writes). On
-Workers, `D1Conn` wraps the D1 binding. Both live in `db.py`, and a
-request-scoped dependency (`routers/deps.py:conn`) picks one — from
-`app.state` locally, from `request.scope["env"].DB` inside workerd. The
-dependency lives in `routers/` and not `db.py` on purpose: FastAPI only
-recognizes a `Request` parameter through its type annotation, and that
-annotation is HTTP knowledge, which `db.py` must not have. Routers and
-services are identical in both runtimes; `tests/test_app.py` boots the
-app under TestClient with the SQLite backend and would catch any drift.
+The database is reached through the **conn interface**:
+`await conn.execute(sql, params) -> list[dict]`. `D1Conn` in `db.py`
+wraps the binding that the ASGI bridge places on `request.scope["env"]`,
+and a request-scoped dependency (`routers/deps.py:conn`) hands it to
+every router. The dependency lives in `routers/` and not `db.py` on
+purpose: FastAPI only recognizes a `Request` parameter through its type
+annotation, and that annotation is HTTP knowledge, which `db.py` must not
+have. Outside a Worker there is no database, so `get_conn` raises instead
+of pretending — the one-runtime rule stated as an error.
 
-The schema comes from `migrations/*.sql` — the single source of truth for
-both backends. Locally, `local.py`'s lifespan applies them through
-`migrations.py` (a tiny runner that records applied filenames in a
-`schema_migrations` table); on Workers, wrangler applies the same files
-(`d1 migrations apply`), which is why the M4 proof that migrations land
-cleanly on a fresh D1 was applying the same files, not a rewrite
-(runbook and evidence in `docs/DEPLOY.md`).
+The schema comes from `migrations/*.sql`, and wrangler is the only runner
+(`d1 migrations apply`, local or remote — runbook and evidence in
+`docs/DEPLOY.md`). There is no in-app migration code: the local test
+plane applies the same files through the same wrangler path, so "what a
+fresh D1 builds" is exercised, not assumed.
 
 The import root is `src/` (the directory workerd treats as the module
-root), so application imports are flat: `from core.x25519 import ...`.
-uvicorn matches it with `--app-dir src`; tests get the same root from the
-shim in `tests/__init__.py`. One extra rule found by the deploy-snapshot
-test: `local.py` imports `uvicorn` lazily inside its `main()` — uvicorn
-drags in `multiprocessing`, whose import draws entropy, and every module
-that ships must import cleanly with a poisoned PRNG (see
-`tests/test_import_hygiene.py`, which runs the poison import in a
-subprocess). The spike evidence behind these shapes is in
-`docs/M0-FINDINGS.md`.
+root), so application imports are flat: `from core.x25519 import ...`;
+pure tests get the same root from the shim in `tests/__init__.py`.
+Every module that ships must import cleanly with a poisoned PRNG (the
+deploy-time snapshot constraint — see `tests/pure/test_import_hygiene.py`,
+which runs the poison import in a subprocess). The spike evidence behind
+these shapes is in `docs/M0-FINDINGS.md`.
+
+## How the tests run
+
+Two tiers, matching the two kinds of code:
+
+```
+tests/pure/     imports pure modules (core/, pure services, models) and
+                runs them under the uv-venv interpreter in ~1s. They
+                have no environment dependency, so they exercise the
+                same code Pyodide executes.
+tests/workerd/  boots a real plane (`pywrangler dev` on a throwaway
+                --persist-to D1 with a fresh REALITY_KEY_SECRET) and
+                drives it over HTTP — the same surface agents and admins
+                use. One server per run; unique ids per test; no resets.
+```
+
+The split is the one-runtime rule applied to tests: app code that needs
+bindings, HTTP, or the database cannot run outside workerd, so it is
+tested black-box; code that takes dicts and returns dicts runs anywhere,
+so unit tests keep their 1-second feedback loop. `harness.py` owns the
+plane lifecycle (migrations, boot, health wait, teardown) and the
+`Client`/`uid` helpers every workerd test uses.
 
 ## The render pipeline
 
@@ -338,10 +355,14 @@ The scheme prefix and its IV mean the format can rotate later without a
 migration, and every stored value is self-contained. `crypto.py` speaks
 WebCrypto, which only exists inside workerd, so sealing happens through
 `services/key_cipher.py`: inside workerd, `seal` encrypts with the secret
-and `unseal` decrypts; under CPython (local uvicorn, tests) there is no
-secret and no cipher, so the same functions store and read plaintext.
-The `v1:` prefix is the discriminator, which is why pre-M4 plaintext
-rows keep reading and no migration was needed to introduce the format.
+and `unseal` decrypts. There is no plaintext mode — the app runs only
+under workerd, where the secret always exists, and a missing secret
+raises rather than falling back (a render that ran without the secret
+would write keys it could never decrypt, and a dump would yield
+plaintext). `unseal` rejects any value without the `v1:` prefix, so a
+corrupt or unsealed row fails loudly at the first reader instead of
+serving unusable key material; a future format rotation becomes an
+explicit scheme bump, not a silent guess.
 M4's deploy therefore starts from a fresh D1 where every generated key
 is ciphertext from the first day.
 

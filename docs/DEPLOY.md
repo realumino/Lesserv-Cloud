@@ -33,7 +33,9 @@ deploy with `--config wrangler.local.jsonc`. Never commit them.
 
 ```powershell
 # 0. Local checks must be green first.
-uv run python -m unittest discover -s tests -t .
+#    (pure tier ~1s; workerd tier boots a local plane, needs Node + .dev.vars)
+uv run python -m unittest discover -s tests/pure -t .
+uv run python -m unittest discover -s tests/workerd -t .
 
 # 1. Schema: migrations apply cleanly to a fresh D1. (Local D1 for dev:)
 npx wrangler d1 migrations apply <d1-database-name> --local
@@ -99,8 +101,8 @@ curl.exe -i https://cp.example.org/api/node/heartbeat -H "Authorization: Bearer 
 
 The full endpoint sequence (create node → put config → mint token →
 enroll → heartbeat → config fetch → report → sync) is pinned by
-`tests/test_node_protocol.py` locally; run it against the deployed plane
-with the same curl steps used for the M4 acceptance run.
+`tests/workerd/test_node_protocol.py` locally; run it against the
+deployed plane with the same curl steps used for the M4 acceptance run.
 
 Verify the keys really are ciphertext in D1:
 

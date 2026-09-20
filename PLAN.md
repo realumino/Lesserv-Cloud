@@ -73,6 +73,21 @@ VPS at the deployed plane (exact commands in `docs/DEPLOY.md`). The
 executable plan and its decisions live in
 [`docs/M4-PLAN.md`](docs/M4-PLAN.md).
 
+Post-M4 cleanup — **workerd is the only runtime.** The local uvicorn
+entrypoint (`src/local.py`), the SQLite backend (`SqliteConn`), the
+in-app migration runner (`src/migrations.py`), and `key_cipher`'s
+plaintext fallback are deleted; `uvicorn`/`httpx` are out of the dev
+dependencies. Tests now run in two tiers: `tests/pure/` (pure modules,
+uv-venv interpreter, ~1s) and `tests/workerd/` (a real plane on a
+throwaway `--persist-to` D1, driven over HTTP with unique ids). 155
+tests pass (84 pure + 71 workerd); the deleted 46 lost their subject
+(SQLite conn semantics, the migration runner, the plaintext fallback)
+or were service-level duplicates of what the HTTP tests pin. A static
+AST test (`tests/pure/test_no_environment_compat.py`) fails the build if
+`src/` ever imports `sqlite3`, `uvicorn`, or module-scope `js`/`workers`
+again. The cross-repo agent E2E (`Lesserv-Agent`) launches the plane via
+`pywrangler dev` the same way.
+
 | # | Milestone | Status |
 |---|-----------|--------|
 | 0 | Spike: platform viability | done |

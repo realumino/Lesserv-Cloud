@@ -285,8 +285,8 @@ class TestShareService(unittest.TestCase):
 
 # The archived file's TestShareRouter class (GET /api/users/{u}/links,
 # calling endpoint functions with mocks) is replaced by node-scoped
-# endpoint tests in tests/test_admin_users.py: the links endpoint now
-# aggregates across nodes, so its status-code semantics live there.
+# endpoint tests in tests/workerd/test_admin_users.py: the links endpoint
+# now aggregates across nodes, so its status-code semantics live there.
 
 
 if __name__ == "__main__":

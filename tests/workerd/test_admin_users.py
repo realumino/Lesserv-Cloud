@@ -1,16 +1,15 @@
 """Tests for the user admin API: CRUD with per-node access, and share links.
 
-Why TestClient: the payload/response shapes and the status-code semantics
+WHY HTTP: the payload/response shapes and the status-code semantics
 (404/409/503/409) are the contract the M5 frontend will build against.
-The archived links endpoint's single-node codes carry over; the links now
-aggregate across nodes.
+Ported from TestClient to the shared-plane harness with unique ids; the
+user-service uuid invariants from test_users.py ride along as HTTP tests
+(uuid stability is visible in the GET response).
 """
 
 import unittest
 
-from fastapi.testclient import TestClient
-
-from tests.support import cleanup_db, make_test_app, open_fresh_db_sync
+from tests.workerd.harness import client, uid
 
 
 def _config(listen="0.0.0.0"):
@@ -39,30 +38,32 @@ def _config(listen="0.0.0.0"):
 
 
 class AdminUserApi(unittest.TestCase):
-    """The /api/admin/users surface over a throwaway backend."""
+    """The /api/admin/users surface over a live plane."""
 
     def setUp(self):
-        self.conn, self.path = open_fresh_db_sync()
-        self.addCleanup(cleanup_db, self.conn, self.path)
-        self.client = TestClient(make_test_app(self.conn))
+        self.node = uid("n")
+        self.user = uid("alice")
+        self.client = client()
 
-    def _make_node(self, node_id="tokyo01", address="funky.example.com", config=None):
+    def _make_node(self, node_id=None, address="funky.example.com", config=None):
         """Create a node via the API; optionally paste its config."""
         response = self.client.post("/api/admin/nodes", json={
-            "id": node_id, "label": "Node", "address": address,
+            "id": node_id or self.node, "label": "Node", "address": address,
         })
         assert response.status_code == 201, response.text
         if config is not None:
             put = self.client.put(
-                f"/api/admin/nodes/{node_id}/config", json=config,
+                f"/api/admin/nodes/{node_id or self.node}/config", json=config,
             )
             assert put.status_code == 200, put.text
 
-    def _make_user(self, username="alice", node_id="tokyo01", status=None):
+    def _make_user(self, username=None, node_id=None, status=None):
         """Create a user with access to one node via the API."""
-        payload = {"username": username, "access": {
-            node_id: {"allowed_inbounds": ["reality"],
-                      "allowed_outbounds": ["niigata"]},
+        payload = {"username": username or self.user, "access": {
+            node_id or self.node: {
+                "allowed_inbounds": ["reality"],
+                "allowed_outbounds": ["niigata"],
+            },
         }}
         if status:
             payload["status"] = status
@@ -73,7 +74,7 @@ class AdminUserApi(unittest.TestCase):
         response = self._make_user()
 
         self.assertEqual(response.status_code, 201)
-        access = response.json()["access"]["tokyo01"]
+        access = response.json()["access"][self.node]
         self.assertEqual(access["allowed_outbounds"], ["niigata"])
         uuids = access["uuids"]
         self.assertEqual(set(uuids), {"niigata"})
@@ -85,8 +86,9 @@ class AdminUserApi(unittest.TestCase):
         self.assertEqual(first.status_code, 201)
         self.assertEqual(self._make_user().status_code, 409)
         ghost = self.client.post("/api/admin/users", json={
-            "username": "bob",
-            "access": {"nowhere": {"allowed_inbounds": [], "allowed_outbounds": []}},
+            "username": uid("bob"),
+            "access": {"nowhere": {
+                "allowed_inbounds": [], "allowed_outbounds": []}},
         })
         self.assertEqual(ghost.status_code, 404)
         bad = self.client.post("/api/admin/users", json={
@@ -98,47 +100,84 @@ class AdminUserApi(unittest.TestCase):
         self._make_node()
         self._make_user()
 
-        updated = self.client.put("/api/admin/users/alice", json={"note": "x"})
+        updated = self.client.put(f"/api/admin/users/{self.user}",
+                                  json={"note": "x"})
         self.assertEqual(updated.json()["note"], "x")
 
-        deleted = self.client.delete("/api/admin/users/alice")
+        deleted = self.client.delete(f"/api/admin/users/{self.user}")
         self.assertEqual(deleted.status_code, 204)
-        self.assertEqual(self.client.get("/api/admin/users/alice").status_code, 404)
         self.assertEqual(
-            self.client.delete("/api/admin/users/alice").status_code, 404
+            self.client.get(f"/api/admin/users/{self.user}").status_code, 404)
+        self.assertEqual(
+            self.client.delete(f"/api/admin/users/{self.user}").status_code, 404
         )
 
     def test_update_access_map_is_authoritative_membership(self):
-        self._make_node("tokyo01")
-        self._make_node("toyama01")
+        other = uid("n")
+        self._make_node(self.node)
+        self._make_node(other)
         self._make_user()
-        self.client.put("/api/admin/users/alice", json={"access": {
-            "toyama01": {"allowed_inbounds": [], "allowed_outbounds": []},
+        self.client.put(f"/api/admin/users/{self.user}", json={"access": {
+            other: {"allowed_inbounds": [], "allowed_outbounds": []},
         }})
 
-        user = self.client.get("/api/admin/users/alice").json()
+        user = self.client.get(f"/api/admin/users/{self.user}").json()
 
-        self.assertEqual(set(user["access"]), {"toyama01"})
+        self.assertEqual(set(user["access"]), {other})
+
+    def test_update_with_access_adds_exactly_one_new_uuid(self):
+        """The uuid rule over HTTP: existing pairs survive, new tags mint."""
+        self._make_node()
+        created = self._make_user()
+        first_uuids = created.json()["access"][self.node]["uuids"]
+        self.client.put(f"/api/admin/users/{self.user}", json={"access": {
+            self.node: {"allowed_inbounds": ["reality"],
+                        "allowed_outbounds": ["niigata", "other"]},
+        }})
+
+        uuids = self.client.get(
+            f"/api/admin/users/{self.user}").json(
+        )["access"][self.node]["uuids"]
+
+        self.assertEqual(uuids["niigata"], first_uuids["niigata"])
+        self.assertIn("other", uuids)
+
+    def test_update_without_access_leaves_rows_alone(self):
+        """None means "leave unchanged": a note edit keeps membership."""
+        self._make_node()
+        self._make_user()
+
+        self.client.put(f"/api/admin/users/{self.user}", json={"note": "x"})
+
+        user = self.client.get(f"/api/admin/users/{self.user}").json()
+        self.assertIn(self.node, user["access"])
+
+    def test_create_with_no_access_has_empty_access(self):
+        self._make_node()
+        response = self.client.post("/api/admin/users",
+                                    json={"username": self.user})
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["access"], {})
 
     def test_links_build_reality_uri_from_node_address_and_stored_key(self):
         """The whole chain: config pasted, key ensured at render, pbk derived."""
         self._make_node(config=_config())
         self._make_user()
-        # Keys are minted by the render choke point (first heartbeat or
-        # pane view), never by pasting or by link generation itself.
-        runtime = self.client.get("/api/admin/nodes/tokyo01/config/runtime")
+        runtime = self.client.get(
+            f"/api/admin/nodes/{self.node}/config/runtime")
         assert runtime.status_code == 200, runtime.text
 
-        response = self.client.get("/api/admin/users/alice/links")
+        response = self.client.get(f"/api/admin/users/{self.user}/links")
 
         self.assertEqual(response.status_code, 200)
         links = response.json()["links"]
         self.assertEqual(len(links), 1)
         link = links[0]
-        self.assertEqual(link["node"], "tokyo01")
-        self.assertEqual(link["inbound"], "reality-tokyo01")
-        self.assertEqual(link["outbound"], "tokyo01-niigata")
-        self.assertEqual(link["email"], "alice@tokyo01-niigata")
+        self.assertEqual(link["node"], self.node)
+        self.assertEqual(link["inbound"], f"reality-{self.node}")
+        self.assertEqual(link["outbound"], f"{self.node}-niigata")
+        self.assertEqual(link["email"], f"{self.user}@{self.node}-niigata")
         self.assertIsNone(link["profile"])
         self.assertEqual(link["label"], "Node · REALITY → Niigata")
         uri = link["uri"]
@@ -146,21 +185,23 @@ class AdminUserApi(unittest.TestCase):
         self.assertIn("funky.example.com:443", uri)
         self.assertIn("security=reality", uri)
         self.assertIn("sid=1234", uri)
-        keys = self.client.get("/api/admin/nodes/tokyo01/reality").json()["keys"]
+        keys = self.client.get(
+            f"/api/admin/nodes/{self.node}/reality").json()["keys"]
         self.assertIn(f"pbk={keys[0]['public_key']}", uri)
 
     def test_links_include_one_profile_variant_per_exit(self):
         self._make_node(config=_config())
         self._make_user()
-        created = self.client.post("/api/admin/nodes/tokyo01/link-profiles", json={
-            "id": "cdn",
-            "inbound_tag": "reality",
-            "label": "CDN",
-            "overrides": {"address": "cdn.example.com", "port": 443},
-        })
+        created = self.client.post(
+            f"/api/admin/nodes/{self.node}/link-profiles", json={
+                "id": "cdn",
+                "inbound_tag": "reality",
+                "label": "CDN",
+                "overrides": {"address": "cdn.example.com", "port": 443},
+            })
         assert created.status_code == 201, created.text
 
-        response = self.client.get("/api/admin/users/alice/links")
+        response = self.client.get(f"/api/admin/users/{self.user}/links")
 
         self.assertEqual(response.status_code, 200)
         links = response.json()["links"]
@@ -183,7 +224,7 @@ class AdminUserApi(unittest.TestCase):
         self._make_node(config=None)
         self._make_user()
 
-        response = self.client.get("/api/admin/users/alice/links")
+        response = self.client.get(f"/api/admin/users/{self.user}/links")
 
         self.assertEqual(response.status_code, 503)
 
@@ -192,38 +233,39 @@ class AdminUserApi(unittest.TestCase):
         self._make_node(address="", config=_config())
         self._make_user()
 
-        response = self.client.get("/api/admin/users/alice/links")
+        response = self.client.get(f"/api/admin/users/{self.user}/links")
 
         self.assertEqual(response.status_code, 409)
 
     def test_links_200_empty_for_user_without_access(self):
         self._make_node(config=_config())
-        self.client.post("/api/admin/users", json={"username": "alice"})
+        self.client.post("/api/admin/users", json={"username": self.user})
 
-        response = self.client.get("/api/admin/users/alice/links")
+        response = self.client.get(f"/api/admin/users/{self.user}/links")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["links"], [])
 
     def test_links_warn_for_disabled_user_and_skipped_nodes(self):
         """Disabled users still get links (archived rule); configless nodes warn."""
-        self._make_node("tokyo01", config=_config())
-        self._make_node("toyama01", config=None)
+        other = uid("n")
+        self._make_node(config=_config())
+        self._make_node(other, config=None)
         response = self.client.post("/api/admin/users", json={
-            "username": "alice", "status": "disabled",
+            "username": self.user, "status": "disabled",
             "access": {
-                "tokyo01": {"allowed_inbounds": ["reality"],
+                self.node: {"allowed_inbounds": ["reality"],
                             "allowed_outbounds": ["niigata"]},
-                "toyama01": {"allowed_inbounds": [], "allowed_outbounds": []},
+                other: {"allowed_inbounds": [], "allowed_outbounds": []},
             },
         })
         assert response.status_code == 201
 
-        body = self.client.get("/api/admin/users/alice/links").json()
+        body = self.client.get(f"/api/admin/users/{self.user}/links").json()
 
         self.assertTrue(body["links"])
         self.assertTrue(
-            any("toyama01" in w for w in body["warnings"]), body["warnings"]
+            any(other in w for w in body["warnings"]), body["warnings"]
         )
         self.assertTrue(
             any("disabled" in w for w in body["warnings"]), body["warnings"]

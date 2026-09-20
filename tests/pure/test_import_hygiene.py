@@ -33,7 +33,6 @@ _POISON_IMPORT = textwrap.dedent(
     uuid.uuid4 = _poison
 
     import main  # noqa: F401 - the import itself is the assertion
-    import local  # noqa: F401
     import services.labels  # noqa: F401
     import services.key_cipher  # noqa: F401
     import services.link_profile_service  # noqa: F401

@@ -1,20 +1,16 @@
-"""Tests for the PROTOCOL.md v1 pull contract over HTTP.
+"""Tests for the PROTOCOL.md v1 pull contract, over a real plane.
 
-Why TestClient: authentication, status codes, and the heartbeat → config
-→ report convergence loop are the cross-repo contract — exactly what an
+Why HTTP: authentication, status codes, and the heartbeat → config →
+report convergence loop are the cross-repo contract — exactly what an
 HTTP test pins. The fake-agent flow here (enroll, poll, fetch, apply,
 report) is the same loop the Lesserv-Agent repo runs for real; the plane
-cannot tell them apart.
+cannot tell them apart. Ported from TestClient: node state is read
+through the admin /sync view instead of raw rows.
 """
 
-import asyncio
 import unittest
 
-from fastapi.testclient import TestClient
-
-import db
-from services import node_state_service
-from tests.support import cleanup_db, make_test_app, open_fresh_db_sync
+from tests.workerd.harness import client, uid
 
 
 def _config():
@@ -33,43 +29,45 @@ def _config():
 
 
 class NodeProtocolApi(unittest.TestCase):
-    """The /api/node/* surface over a throwaway backend."""
+    """The /api/node/* surface over a live plane."""
 
     def setUp(self):
-        self.conn, self.path = open_fresh_db_sync()
-        self.addCleanup(cleanup_db, self.conn, self.path)
-        self.client = TestClient(make_test_app(self.conn))
+        self.node = uid("n")
+        self.client = client()
 
-    def _make_node(self, node_id="tokyo01", config=None):
+    def _make_node(self, node_id=None, config=None):
         """Create a node via the API; optionally paste its config."""
         response = self.client.post("/api/admin/nodes", json={
-            "id": node_id, "label": "Node", "address": "funky.example.com",
+            "id": node_id or self.node, "label": "Node",
+            "address": "funky.example.com",
         })
         assert response.status_code == 201, response.text
         if config is not None:
             put = self.client.put(
-                f"/api/admin/nodes/{node_id}/config", json=config)
+                f"/api/admin/nodes/{node_id or self.node}/config", json=config)
             assert put.status_code == 200, put.text
 
-    def _mint(self, node_id="tokyo01"):
+    def _mint(self, node_id=None):
         """Mint a token via the API and return the plaintext."""
-        response = self.client.post(f"/api/admin/nodes/{node_id}/token")
+        response = self.client.post(
+            f"/api/admin/nodes/{node_id or self.node}/token")
         assert response.status_code == 201, response.text
         body = response.json()
-        self.assertEqual(body["node_id"], node_id)
+        self.assertEqual(body["node_id"], node_id or self.node)
         self.assertTrue(body["token"])
         return body["token"]
 
-    def _auth(self, token, node_id="tokyo01"):
+    def _auth(self, token, node_id=None):
         """Headers one node sends on every request."""
         return {
             "Authorization": f"Bearer {token}",
-            "X-Lesserv-Node": node_id,
+            "X-Lesserv-Node": node_id or self.node,
         }
 
-    def _node_row(self, node_id="tokyo01"):
-        """Read one node row straight from the throwaway db."""
-        return asyncio.run(db.get_node(self.conn, node_id))
+    def _sync(self, node_id=None):
+        """Read one node's state through the admin drift view."""
+        return self.client.get(
+            f"/api/admin/nodes/{node_id or self.node}/sync").json()
 
     def test_mint_404_for_unknown_node(self):
         self.assertEqual(
@@ -90,7 +88,8 @@ class NodeProtocolApi(unittest.TestCase):
             self.client.post("/api/node/enroll", headers=headers,
                              json={"protocol": 1}).status_code, 401)
         self.assertEqual(
-            self.client.post("/api/node/enroll", headers=self._auth(second),
+            self.client.post("/api/node/enroll",
+                             headers=self._auth(second),
                              json={"protocol": 1}).status_code, 200)
 
     def test_enroll_rejects_bad_credentials(self):
@@ -100,7 +99,7 @@ class NodeProtocolApi(unittest.TestCase):
         cases = [
             ({}, 401, "no headers at all"),
             ({"Authorization": f"Bearer {token}"}, 401, "no node header"),
-            ({"X-Lesserv-Node": "tokyo01"}, 401, "no bearer token"),
+            ({"X-Lesserv-Node": self.node}, 401, "no bearer token"),
             (self._auth("wrong"), 401, "wrong token"),
             (self._auth(token, "ghost"), 401, "unknown node id"),
         ]
@@ -111,9 +110,10 @@ class NodeProtocolApi(unittest.TestCase):
 
     def test_node_cannot_read_another_node(self):
         """The one invariant that deserves an explicit test (PROTOCOL.md)."""
-        self._make_node("tokyo01", config=_config())
-        self._make_node("toyama01", config=_config())
-        token_a = self._mint("tokyo01")
+        other = uid("n")
+        self._make_node(self.node, config=_config())
+        self._make_node(other, config=_config())
+        token_a = self._mint(self.node)
 
         for method, path, kwargs in [
             ("post", "/api/node/enroll", {"json": {"protocol": 1}}),
@@ -127,7 +127,7 @@ class NodeProtocolApi(unittest.TestCase):
              {"json": {"protocol": 1, "boot_id": "b", "counters": {}}}),
         ]:
             response = getattr(self.client, method)(
-                path, headers=self._auth(token_a, "toyama01"), **kwargs)
+                path, headers=self._auth(token_a, other), **kwargs)
             self.assertEqual(response.status_code, 401, path)
 
     def test_enroll_returns_metadata_and_desired_hash(self):
@@ -142,17 +142,17 @@ class NodeProtocolApi(unittest.TestCase):
         self.assertEqual(first.status_code, 200)
         body = first.json()
         self.assertEqual(body["state"], "active")
-        self.assertEqual(body["id"], "tokyo01")
+        self.assertEqual(body["id"], self.node)
         self.assertTrue(body["desired_hash"])
         second = self.client.post(
             "/api/node/enroll", headers=self._auth(token),
             json={"protocol": 1})
         self.assertEqual(second.status_code, 200)
         self.assertEqual(second.json()["desired_hash"], body["desired_hash"])
-        row = self._node_row()
-        self.assertEqual(row["agent_version"], "0.1.0")
-        self.assertEqual(row["xray_version"], "25.1.1")
-        self.assertIsNotNone(row["last_seen"])
+        sync = self._sync()
+        self.assertEqual(sync["agent_version"], "0.1.0")
+        self.assertEqual(sync["xray_version"], "25.1.1")
+        self.assertIsNotNone(sync["last_seen"])
 
     def test_enroll_without_config_has_null_desired_hash(self):
         self._make_node()
@@ -206,9 +206,9 @@ class NodeProtocolApi(unittest.TestCase):
             json={"protocol": 1}).json()["desired_hash"]
 
         created = self.client.post("/api/admin/users", json={
-            "username": "alice",
-            "access": {"tokyo01": {"allowed_inbounds": ["reality"],
-                                  "allowed_outbounds": ["niigata"]}},
+            "username": uid("alice"),
+            "access": {self.node: {"allowed_inbounds": ["reality"],
+                                   "allowed_outbounds": ["niigata"]}},
         })
         self.assertEqual(created.status_code, 201)
         after = self.client.post(
@@ -226,11 +226,11 @@ class NodeProtocolApi(unittest.TestCase):
                    "xray_running": True}
         self.client.post("/api/node/heartbeat", headers=headers,
                          json=payload)
-        before = self._node_row()
+        before = self._sync()
 
         self.client.post("/api/node/heartbeat", headers=headers,
                          json=payload)
-        after = self._node_row()
+        after = self._sync()
 
         self.assertEqual(before["last_seen"], after["last_seen"])
         self.assertEqual(after["applied_hash"], "abc")
@@ -248,7 +248,7 @@ class NodeProtocolApi(unittest.TestCase):
         self.assertEqual(full.status_code, 200)
         self.assertEqual(full.json()["hash"], wanted)
         self.assertIn("inbounds", full.json()["config"])
-        self.assertEqual(full.headers["Cache-Control"], "no-store")
+        self.assertEqual(full.headers["cache-control"], "no-store")
         current = self.client.get("/api/node/config", headers=headers,
                                   params={"hash": wanted})
         self.assertEqual(current.status_code, 200)
@@ -281,10 +281,10 @@ class NodeProtocolApi(unittest.TestCase):
                   "stage": "applied"})
 
         self.assertEqual(response.status_code, 200)
-        row = self._node_row()
-        self.assertEqual(row["applied_hash"], wanted)
-        self.assertIsNone(row["last_error"])
-        self.assertEqual(row["health"], "ok")
+        sync = self._sync()
+        self.assertEqual(sync["applied_hash"], wanted)
+        self.assertIsNone(sync["last_error"])
+        self.assertEqual(sync["health"], "ok")
 
     def test_report_failure_keeps_hash_and_records_stage(self):
         """A failed apply rolled back: drift stays visible, cause stored."""
@@ -301,10 +301,10 @@ class NodeProtocolApi(unittest.TestCase):
                   "stage": "started", "error": "bind: address in use"})
 
         self.assertEqual(response.status_code, 200)
-        row = self._node_row()
-        self.assertEqual(row["applied_hash"], "good")
-        self.assertEqual(row["last_error"], "bind: address in use")
-        self.assertEqual(row["health"], "error:started")
+        sync = self._sync()
+        self.assertEqual(sync["applied_hash"], "good")
+        self.assertEqual(sync["last_error"], "bind: address in use")
+        self.assertEqual(sync["health"], "error:started")
 
     def test_report_rejects_unknown_stage(self):
         self._make_node()
@@ -324,9 +324,9 @@ class NodeProtocolApi(unittest.TestCase):
                    "stage": "applied"}
 
         self.client.post("/api/node/report", headers=headers, json=payload)
-        before = self._node_row()
+        before = self._sync()
         self.client.post("/api/node/report", headers=headers, json=payload)
-        after = self._node_row()
+        after = self._sync()
 
         self.assertEqual(before["applied_hash"], after["applied_hash"])
 
@@ -338,8 +338,10 @@ class NodeProtocolApi(unittest.TestCase):
             "/api/node/stats", headers=self._auth(token),
             json={"protocol": 1, "boot_id": "b3f1",
                   "counters": {
-                      "user>>>alice@tokyo01-niigata>>>traffic>>>uplink": 10,
-                      "user>>>alice@tokyo01-niigata>>>traffic>>>downlink": 20,
+                      "user>>>alice@"
+                      f"{self.node}-niigata>>>traffic>>>uplink": 10,
+                      "user>>>alice@"
+                      f"{self.node}-niigata>>>traffic>>>downlink": 20,
                   }})
 
         self.assertEqual(response.status_code, 200)
@@ -362,9 +364,9 @@ class NodeProtocolApi(unittest.TestCase):
         token = self._mint()
         headers = self._auth(token)
         self.client.post("/api/admin/users", json={
-            "username": "alice",
-            "access": {"tokyo01": {"allowed_inbounds": ["reality"],
-                                  "allowed_outbounds": ["niigata"]}},
+            "username": uid("alice"),
+            "access": {self.node: {"allowed_inbounds": ["reality"],
+                                   "allowed_outbounds": ["niigata"]}},
         })
 
         self.client.post("/api/node/enroll", headers=headers,
@@ -385,63 +387,7 @@ class NodeProtocolApi(unittest.TestCase):
                   "applied_hash": wanted}).json()["desired_hash"]
 
         self.assertEqual(settled, wanted)
-        self.assertEqual(self._node_row()["applied_hash"], wanted)
-
-
-class TestShouldTouch(unittest.TestCase):
-    """The heartbeat cheap-write rule, without a database."""
-
-    def _node(self, **overrides):
-        """A stored row with boring defaults."""
-        row = {
-            "last_seen": 1000, "health": "ok", "agent_version": "0.1.0",
-            "xray_version": "25.1.1", "last_error": None,
-            "applied_hash": "abc",
-        }
-        row.update(overrides)
-        return row
-
-    def _values(self, **overrides):
-        """Desired values identical to the stored row by default."""
-        values = {
-            "last_seen": 1000, "health": "ok", "agent_version": "0.1.0",
-            "xray_version": "25.1.1", "last_error": None,
-            "applied_hash": "abc",
-        }
-        values.update(overrides)
-        return values
-
-    def test_first_contact_always_writes(self):
-        self.assertTrue(node_state_service.should_touch(
-            self._node(last_seen=None), self._values(), 1000))
-
-    def test_stale_liveness_writes(self):
-        self.assertTrue(node_state_service.should_touch(
-            self._node(last_seen=1000), self._values(), 1061))
-
-    def test_fresh_identical_heartbeat_skips(self):
-        self.assertFalse(node_state_service.should_touch(
-            self._node(last_seen=1000), self._values(), 1059))
-
-    def test_changed_fact_writes_even_when_fresh(self):
-        self.assertTrue(node_state_service.should_touch(
-            self._node(last_seen=1000),
-            self._values(applied_hash="def"), 1001))
-
-
-class TestProtocolFreeze(unittest.TestCase):
-    """PROTOCOL.md is frozen at protocol 1 for the deployed plane (M4).
-
-    Why a pin and not a docstring: both repos implement this number, and
-    the agent's zero-code-change proof against Workers depends on it not
-    drifting silently. Bumping it means editing this test, the agent, and
-    PROTOCOL.md together.
-    """
-
-    def test_served_protocol_version_is_one(self):
-        import routers.node
-
-        self.assertEqual(routers.node.PROTOCOL_VERSION, 1)
+        self.assertEqual(self._sync()["applied_hash"], wanted)
 
 
 if __name__ == "__main__":

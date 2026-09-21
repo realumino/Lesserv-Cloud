@@ -1,4 +1,13 @@
 {
+  // WHAT: the committed template for the local wrangler.jsonc.
+  //
+  // WHY this file exists: the Worker's real deploy values — the
+  // custom-domain hostname and the D1 name/id — are operator-specific and
+  // must never be committed. wrangler.jsonc therefore is gitignored and
+  // holds those real values locally; this template holds only placeholders.
+  // Copy it to wrangler.jsonc (scripts/ensure_wrangler_config.mjs does that
+  // automatically when the file is missing) and replace the `routes` and
+  // `d1_databases` values in the copy before deploying. See docs/DEPLOY.md.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "lesserv-cloud",
   "main": "src/worker.ts",
@@ -8,17 +17,18 @@
   "compatibility_date": "2026-09-17",
   // The admin surface needs a zone (Cloudflare Access), so workers.dev is
   // disabled and the Worker takes the whole hostname as a custom domain.
+  // Replace the placeholder hostname in your local copy before deploying.
   "workers_dev": false,
   "routes": [{ "pattern": "cp.example.org", "custom_domain": true }],
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "lesserv",
-      // Placeholder UUID for local development (wrangler dev ignores it
-      // and uses a local database). Replace the name and id
-      // with your own account's values before deploying — see
-      // docs/DEPLOY.md, and keep the real values uncommitted (e.g. in a
-      // gitignored wrangler.local.jsonc deployed with --config).
+      // Placeholder UUID: `wrangler dev` ignores it and uses a local
+      // database, so the template works unchanged for local development
+      // and tests. Replace name and id with your own account's values
+      // (`wrangler d1 create`) in your local copy before deploying — see
+      // docs/DEPLOY.md.
       "database_id": "00000000-0000-0000-0000-000000000000"
     }
   ],

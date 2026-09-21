@@ -109,15 +109,20 @@ Worker over `fetch()` against a real D1, with `migrations/*.sql` applied by
 `readD1Migrations`/`applyD1Migrations` in the setup file.
 
 Dev needs a `.dev.vars` with `REALITY_KEY_SECRET` (see `.dev.vars.example`)
-— without it, every REALITY key endpoint fails loudly by design.
+— without it, every REALITY key endpoint fails loudly by design. The
+wrangler config works the same way: the committed `wrangler.example.jsonc`
+is the template, and the gitignored `wrangler.jsonc` that wrangler reads
+is copied from it by the npm pre-hooks when missing (the placeholders are
+fine for dev and tests; the copy gets the real values before a deploy).
 
 Since M4 the deployed plane is the real thing: a Worker + D1 + Cloudflare
 Access + static assets (hostname and resource ids are operator-specific and
 kept out of this public repo). The deploy runbook — D1 migrations, the
 `REALITY_KEY_SECRET` secret, the Access applications, and the post-deploy
 smoke checks — lives in `docs/DEPLOY.md` and must be kept current by every
-deploy that changes a step. Real values (hostname, D1 name/id) go in a
-gitignored `wrangler.local.jsonc`, never in committed files.
+deploy that changes a step. Real values (hostname, D1 name/id) go in the
+gitignored `wrangler.jsonc`, seeded from the committed
+`wrangler.example.jsonc`, never in committed files.
 
 The admin SPA lives under `frontend/` (React + React Router + Tailwind
 v4, built by Vite with base `/admin/`) and is served from static assets;

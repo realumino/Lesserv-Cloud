@@ -1,8 +1,7 @@
 /**
  * WHAT: write stub SPA indexes when frontend/dist is missing.
  *
- * WHY: the committed wrangler config points its assets directory at
- * frontend/dist, which is gitignored and only exists after
+ * WHY: the wrangler config points its assets directory at frontend/dist, which is gitignored and only exists after
  * `npm --prefix frontend run build`. wrangler refuses to boot when that
  * directory is absent, so a fresh clone could not run `npm run dev` or
  * `npm run build` at all. The stubs satisfy the config without shipping

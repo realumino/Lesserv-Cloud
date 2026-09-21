@@ -15,9 +15,11 @@ repo.** Everywhere below:
 | `<admin-email>` | the identity allowed by the Access allow policy |
 | `<your-team>.cloudflareaccess.com` | your Access team domain |
 
-Keep the real values in a gitignored `wrangler.local.jsonc` (same shape as
-`wrangler.jsonc`, with your real `routes` and `d1_databases` entries) and
-deploy with `--config wrangler.local.jsonc`. Never commit them.
+Copy the committed `wrangler.example.jsonc` to the gitignored
+`wrangler.jsonc` (the npm pre-hooks do it for you when the file is
+missing) and put the real `routes` and `d1_databases` values in that copy:
+every wrangler command then reads `wrangler.jsonc` by default. Never
+commit the copy.
 
 ## What is deployed
 
@@ -60,7 +62,7 @@ node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"
 # 3. Frontend, then the Worker + assets in one unit.
 npm --prefix frontend install   # first time only
 npm --prefix frontend run build
-npm run build && npx wrangler deploy --config wrangler.local.jsonc
+npm run build && npx wrangler deploy
 ```
 
 `wrangler deploy` creates the proxied DNS record and the custom-domain
@@ -147,10 +149,10 @@ and no D1, that audit ran locally rather than against a production copy.
 **Remaining operator step.** Every deploy from here is a first deploy:
 create the D1 (`npx wrangler d1 create <d1-database-name>`), apply
 migrations, set `REALITY_KEY_SECRET`, configure the Access applications
-above, then `npm run build && npx wrangler deploy --config
-wrangler.local.jsonc`. `wrangler.local.jsonc` already points `main` at
-`src/worker.ts`, but its D1 id refers to a database that no longer exists —
-replace it with the fresh one.
+above, then `npm run build && npx wrangler deploy`. Your `wrangler.jsonc`
+already points `main` at `src/worker.ts`, but its D1 id may still be the
+template placeholder — put the fresh database's name and id (and your real
+hostname) there before deploying.
 
 **If pre-cutover D1 data is ever restored**, rerun the audit before
 sending traffic to it: the only known divergence class is whole-number
@@ -250,5 +252,6 @@ convergence is the deferred part.
   deploy. `npm run build` writes stubs instead, which is fine for a
   dry-run gate and wrong for a real deploy.
 - **Keep operator values out of the public repo.** Hostname, D1 name/id,
-  Access team, admin email, and every token live in gitignored files or
-  your Cloudflare account only.
+  Access team, admin email, and every token live in gitignored files
+  (`wrangler.jsonc` for the deploy values, `.dev.vars` for the local
+  secret) or your Cloudflare account only.

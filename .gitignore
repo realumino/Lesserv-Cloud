@@ -3,8 +3,10 @@
 .dev.vars
 node_modules/
 
-# operator-private deploy values (real domain, real D1 id): never commit
-wrangler.local.jsonc
+# local wrangler config (real domain, real D1 id): never commit.
+# wrangler.example.jsonc is the committed template; the npm pre-hooks copy
+# it when this file is missing.
+wrangler.jsonc
 
 # frontend
 frontend/node_modules/

@@ -41,7 +41,7 @@ const NAVIGATION = {
 /**
  * WHAT: the test-only assets binding, typed locally.
  *
- * WHY a cast: the committed wrangler config never fetches assets from the
+ * WHY a cast: the deploy wrangler config never fetches assets from the
  * Worker, so `wrangler types` does not emit ASSETS into Env; the vitest
  * config declares the binding for the tests alone, exactly like
  * `TEST_MIGRATIONS` in tests/helpers.ts.

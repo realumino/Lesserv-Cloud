@@ -6,10 +6,11 @@ import { defineConfig } from "vitest/config";
  *
  * WHY the migrations are read here and applied in tests/setup.ts: D1 in
  * tests is real D1 semantics, and the schema must match production. WHY the
- * assets directory is overridden to tests/stub-assets: the committed
- * wrangler config points at the gitignored frontend/dist, and tests must
- * never depend on a SPA build. Paths are relative to the repo root, like
- * the wrangler configPath above them.
+ * assets directory is overridden to tests/stub-assets: the local wrangler
+ * config (seeded from the committed wrangler.example.jsonc) points at the
+ * gitignored frontend/dist, and tests must never depend on a SPA build.
+ * Paths are relative to the repo root, like the wrangler configPath beside
+ * this override.
  */
 export default defineConfig({
   plugins: [
@@ -20,7 +21,7 @@ export default defineConfig({
         miniflare: {
           bindings: { TEST_MIGRATIONS: migrations },
           // WHY the binding is declared here and not in wrangler.jsonc:
-          // the committed config never fetches assets from the Worker, so
+          // the deploy config never fetches assets from the Worker, so
           // it relies on the default (absent) binding. The asset tests
           // need one to reach the assets service; keeping it in the test
           // harness leaves the deployed config untouched. See

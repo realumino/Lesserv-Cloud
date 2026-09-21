@@ -9,10 +9,13 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tests/tsconfig.json",
     "types": "wrangler types",
-    "predev": "node scripts/stub_frontend_dist.mjs",
-    "prebuild": "node scripts/stub_frontend_dist.mjs",
+    "predev": "node scripts/stub_frontend_dist.mjs && node scripts/ensure_wrangler_config.mjs",
+    "prebuild": "node scripts/stub_frontend_dist.mjs && node scripts/ensure_wrangler_config.mjs",
+    "pretest": "node scripts/ensure_wrangler_config.mjs",
+    "pretest:watch": "node scripts/ensure_wrangler_config.mjs",
+    "pretypes": "node scripts/ensure_wrangler_config.mjs",
     "build": "wrangler deploy --dry-run",
-    "predeploy": "node scripts/stub_frontend_dist.mjs",
+    "predeploy": "node scripts/stub_frontend_dist.mjs && node scripts/ensure_wrangler_config.mjs",
     "deploy": "wrangler deploy"
   },
   "dependencies": {

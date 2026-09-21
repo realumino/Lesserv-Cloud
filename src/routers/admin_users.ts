@@ -9,21 +9,17 @@
 import { Hono } from "hono";
 
 import * as db from "../db";
-import { ApiError, parseJsonBody, UserCreate, UserUpdate } from "../models";
+import {
+  ApiError,
+  parseJsonBody,
+  SubTokenOut,
+  UserCreate,
+  UserUpdate,
+} from "../models";
 import * as linkService from "../services/link_service";
-import { hasUsableAddress, type ShareLink } from "../services/share_service";
 import * as userService from "../services/user_service";
 
 export const adminUsers = new Hono<{ Bindings: Env }>();
-
-/** WHAT: one generated link after its owning node id is stamped on. */
-type LinkOut = ShareLink & { node: string };
-
-/** WHAT: an access row paired with the node it points at (null if deleted). */
-type AccessPair = [db.AccessRow, db.NodeRow | null];
-
-/** WHAT: a config-bearing entry ready for link generation. */
-type LinkEntry = [db.AccessRow, db.NodeRow, db.LinkProfileRow[]];
 
 /**
  * WHAT: return the listed node ids that do not exist.
@@ -44,108 +40,6 @@ async function unknownNodeIds(
     }
   }
   return unknown;
-}
-
-/** WHAT: return one user's access rows paired with their node rows. */
-async function accessPairs(env: Env, username: string): Promise<AccessPair[]> {
-  const pairs: AccessPair[] = [];
-  for (const row of await db.listAccessForUser(env.DB, username)) {
-    pairs.push([row, await db.getNode(env.DB, row.node_id)]);
-  }
-  return pairs;
-}
-
-/**
- * WHAT: separate configless-node warnings from config-bearing pairs.
- *
- * WHY two outputs: the skipped ids become warnings and the rest flow into
- * link generation, so the router never has to re-walk the pairs. The
- * warning names the node from the access row, so a dangling access row
- * cannot crash the list (the Python version reached through the null node).
- */
-function splitConfigPairs(pairs: AccessPair[]): [string[], [db.AccessRow, db.NodeRow][]] {
-  const skipped: string[] = [];
-  const withConfig: [db.AccessRow, db.NodeRow][] = [];
-  for (const [row, node] of pairs) {
-    if (node === null || node.config_json === null) {
-      skipped.push(`${row.node_id}: has no config; skipped`);
-      continue;
-    }
-    withConfig.push([row, node]);
-  }
-  return [skipped, withConfig];
-}
-
-/**
- * WHAT: return config-bearing entries that can produce at least one link.
- *
- * WHY the profile addresses are part of the check: a profile may supply the
- * client-facing address even when the node has none, so an entry is
- * addressable if any of its views is.
- */
-async function addressableEntries(
-  env: Env,
-  withConfig: [db.AccessRow, db.NodeRow][],
-): Promise<LinkEntry[]> {
-  const entries: LinkEntry[] = [];
-  for (const [row, node] of withConfig) {
-    const profiles = await db.listLinkProfiles(env.DB, node.id);
-    const profileAddresses = profiles.map(
-      (profile) => profile.overrides["address"],
-    );
-    if (
-      hasUsableAddress(
-        node.config_json as Record<string, unknown>,
-        node.address,
-        profileAddresses,
-      )
-    ) {
-      entries.push([row, node, profiles]);
-    }
-  }
-  return entries;
-}
-
-/** WHAT: warn for config-bearing nodes that cannot produce a usable address. */
-function unaddressableWarnings(
-  withConfig: [db.AccessRow, db.NodeRow][],
-  entries: LinkEntry[],
-): string[] {
-  const addressable = new Set(entries.map(([, node]) => node.id));
-  return withConfig
-    .filter(([, node]) => !addressable.has(node.id))
-    .map(([, node]) => `${node.id}: has no usable address`);
-}
-
-/**
- * WHAT: build every link across the user's config-bearing nodes.
- *
- * WHY the node id rides on each link: a subscription (M6) joins links from
- * several nodes, and each link must carry its own node's address and key
- * derivation. Warnings are prefixed with the node id so a multi-node list
- * stays readable.
- */
-async function collectLinks(
-  env: Env,
-  userStatus: string,
-  entries: LinkEntry[],
-): Promise<[LinkOut[], string[]]> {
-  const links: LinkOut[] = [];
-  const warnings: string[] = [];
-  for (const [row, node, profiles] of entries) {
-    const [nodeLinks, nodeWarnings] = await linkService.nodeLinks(
-      env,
-      node,
-      row,
-      userStatus,
-      profiles,
-    );
-    for (const link of nodeLinks) {
-      links.push({ ...link, node: node.id });
-    }
-    warnings.push(...nodeWarnings.map((warning) => `${node.id}: ${warning}`));
-  }
-  return [links, warnings];
 }
 
 /** WHAT: return every user with their per-node access. */
@@ -204,14 +98,38 @@ adminUsers.delete("/api/admin/users/:username", async (c) => {
 });
 
 /**
+ * WHAT: mint (or rotate) one user's subscription token; plaintext shown in
+ * this response.
+ *
+ * WHY rotation replaces in one statement: the old URL dies the moment the
+ * new token is stored, so a leaked URL is fixed with one POST. Same posture
+ * as the node token mint, but the value is displayed (never hashed) because
+ * the subscription URL is the product — it must stay re-displayable — and
+ * its 256 bits of entropy make the plaintext column safe (docs/M6-PLAN.md).
+ */
+adminUsers.post("/api/admin/users/:username/sub-token", async (c) => {
+  const token = await userService.rotateSubToken(
+    c.env.DB,
+    c.req.param("username"),
+  );
+  if (token === null) {
+    throw new ApiError(404, "user not found");
+  }
+  const body = token as unknown as SubTokenOut;
+  return c.json(body, 201, { "Cache-Control": "no-store" });
+});
+
+/**
  * WHAT: return every share link the user is entitled to, across nodes.
  *
  * WHY read-only: links are a view over existing config, access, key, and
  * profile rows; generating them must not restart Xray or write to the
- * database. The archived status codes carry over: 404 unknown user, 503
- * when the user has access but no node config to build from, 409 when no
- * node has a usable address. Nodes without a config are skipped with a
- * warning.
+ * database. The aggregation (access pairs, skip rules, per-node collection)
+ * lives in `link_service.userLinks`, shared with the M6 subscription body —
+ * two presentations, one list. This route adds only the archived status
+ * codes: 404 unknown user, 503 when the user has access but no node config
+ * to build from, 409 when no node has a usable address. Nodes without a
+ * config are skipped with a warning.
  */
 adminUsers.get("/api/admin/users/:username/links", async (c) => {
   const username = c.req.param("username");
@@ -219,17 +137,16 @@ adminUsers.get("/api/admin/users/:username/links", async (c) => {
   if (user === null) {
     throw new ApiError(404, "user not found");
   }
-  const pairs = await accessPairs(c.env, username);
-  const [warnings, withConfig] = splitConfigPairs(pairs);
-  if (pairs.length > 0 && withConfig.length === 0) {
+  const aggregated = await linkService.userLinks(c.env, username, user.status);
+  if (aggregated.accessCount > 0 && aggregated.withConfigCount === 0) {
     throw new ApiError(503, "no node config to build links from");
   }
-  const entries = await addressableEntries(c.env, withConfig);
-  if (withConfig.length > 0 && entries.length === 0) {
+  if (aggregated.withConfigCount > 0 && aggregated.addressableCount === 0) {
     throw new ApiError(409, "no node has a usable address");
   }
-  const [links, moreWarnings] = await collectLinks(c.env, user.status, entries);
-  warnings.push(...moreWarnings);
-  warnings.push(...unaddressableWarnings(withConfig, entries));
-  return c.json({ username, links, warnings });
+  return c.json({
+    username,
+    links: aggregated.links,
+    warnings: aggregated.warnings,
+  });
 });

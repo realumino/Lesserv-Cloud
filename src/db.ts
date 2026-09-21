@@ -49,6 +49,9 @@ export type UserRow = {
   status: string;
   expire: number | null;
   note: string | null;
+  /** The subscription capability token, plaintext (docs/M6-PLAN.md). */
+  sub_token: string | null;
+  sub_token_created_at: number | null;
   created_at: number;
 };
 
@@ -322,6 +325,46 @@ export async function getUser(
   return rows.length > 0 ? (rows[0] as unknown as UserRow) : null;
 }
 
+/**
+ * WHAT: fetch one user's global row by subscription token, or null.
+ *
+ * WHY no constant-time compare (unlike the node token): the token is
+ * compared through a unique-index lookup rather than against a stored hash,
+ * and 256 bits of entropy make timing side channels worthless — the attacker
+ * cannot guess a prefix one byte at a time when every wrong guess is a full
+ * 43-character miss. The index is what makes the lookup O(log n).
+ */
+export async function getUserBySubToken(
+  db: D1Database,
+  subToken: string,
+): Promise<UserRow | null> {
+  const rows = await selectRows(db, "SELECT * FROM users WHERE sub_token = ?", [
+    subToken,
+  ]);
+  return rows.length > 0 ? (rows[0] as unknown as UserRow) : null;
+}
+
+/**
+ * WHAT: store one user's subscription token (and when it was minted).
+ *
+ * WHY a dedicated setter outside `replaceUser`: the profile edit path
+ * overwrites the user's editable columns and must never clobber the token;
+ * keeping the token out of that statement makes the blur impossible — the
+ * same split as the node's `setReportedAddress`.
+ */
+export async function setSubToken(
+  db: D1Database,
+  username: string,
+  subToken: string,
+  createdAt: number,
+): Promise<void> {
+  await executeWrite(
+    db,
+    "UPDATE users SET sub_token = ?, sub_token_created_at = ? WHERE username = ?",
+    [subToken, createdAt, username],
+  );
+}
+
 /** WHAT: insert the global user row (identity and server facts only). */
 export async function createUser(
   db: D1Database,
@@ -330,16 +373,27 @@ export async function createUser(
     status: string;
     expire: number | null;
     note: string | null;
+    sub_token: string | null;
+    sub_token_created_at: number | null;
     created_at: number;
   },
 ): Promise<void> {
   await executeWrite(
     db,
     `
-        INSERT INTO users (username, status, expire, note, created_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO users (username, status, expire, note, sub_token,
+                           sub_token_created_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         `,
-    [user.username, user.status, user.expire, user.note, user.created_at],
+    [
+      user.username,
+      user.status,
+      user.expire,
+      user.note,
+      user.sub_token,
+      user.sub_token_created_at,
+      user.created_at,
+    ],
   );
 }
 

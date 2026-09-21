@@ -26,6 +26,7 @@ import type {
   RealityKey,
   StatusOut,
   UserCreateIn,
+  SubTokenOut,
   UserLinksOut,
   UserOut,
   UserUpdateIn,
@@ -239,6 +240,12 @@ export const deleteUser = (username: string) =>
 
 export const getUserLinks = (username: string) =>
   request<UserLinksOut>(`/users/${encodeURIComponent(username)}/links`);
+
+/** POST /users/{username}/sub-token — the plaintext token, shown each time. */
+export const rotateSubToken = (username: string) =>
+  request<SubTokenOut>(`/users/${encodeURIComponent(username)}/sub-token`, {
+    method: "POST",
+  });
 
 // --- Status ----------------------------------------------------------------
 

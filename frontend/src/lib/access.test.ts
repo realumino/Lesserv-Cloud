@@ -34,6 +34,8 @@ function user(access: UserOut["access"]): UserOut {
     status: "active",
     expire: null,
     note: null,
+    sub_token: null,
+    sub_token_created_at: null,
     created_at: 0,
     access,
   };

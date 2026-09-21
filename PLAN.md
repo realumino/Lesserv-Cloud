@@ -131,6 +131,26 @@ currently empty and the staging/production deploy is the remaining
 operator step. The executable record, including that deviation, lives in
 [`docs/TS-REWRITE-PLAN.md`](docs/TS-REWRITE-PLAN.md).
 
+M6 gave every user a subscription: a rotatable, plaintext `sub_token`
+minted at user creation (32 random bytes, base64url, stored under a unique
+index), and `GET /sub/{token}` — served under the M4 Access bypass —
+returning standard base64 of the newline-joined URIs across every node the
+user is entitled to, each link carrying its own node's address. The body is
+the admin links endpoint's list encoded: the cross-node aggregation moved
+out of the router into `link_service.userLinks` so both presentations are
+one walk (`tests/workerd/admin_users.test.ts` held green through the move
+with zero edits). Unknown, rotated-out, disabled, expired, and
+nothing-configured tokens all answer `200` with an empty body — a
+capability URL never distinguishes "no such user" from "not entitled" —
+and `expire: 0` means never, matching the UI convention. 236 tests pass
+inside workerd; the SPA gained a `SubscriptionCard` (URL, copy, QR,
+rotate/generate) in the share dialog and the user edit page. The live
+smoke — mint, serve, rotate, disable, unknown-token, fail-closed route
+shape — ran against a local plane. The operator-run acceptance item is
+importing a real subscription URL into a client app against the deployed
+plane, like M4/M5's deferred machine steps. The executable plan and its
+decisions live in [`docs/M6-PLAN.md`](docs/M6-PLAN.md).
+
 | # | Milestone | Status |
 |---|-----------|--------|
 | 0 | Spike: platform viability | done |
@@ -140,7 +160,7 @@ operator step. The executable record, including that deviation, lives in
 | 4 | Control plane on Workers + D1 | done (agent-on-VPS run = operator step) |
 | 5 | Node #2 + the new frontend | done (second-machine run = operator step) |
 | TS | Port the plane from Python to TypeScript on workerd | done (deploy = operator step) |
-| 6 | Subscriptions | not started |
+| 6 | Subscriptions | done (real-client import = operator step) |
 | 7 | Stats + dashboard | not started |
 | 8 | Quota enforcement | not started |
 | — | HMAC request signing (`hmac-v1`) | later |
@@ -274,6 +294,19 @@ base64 newline-joined list of every link the user is entitled to, across
 every node, with each link carrying its own node's address; disabled or
 expired users get an empty body rather than an error; and adding node #2
 enriches an existing subscription URL without changing it.
+
+Complete: the token is plaintext `users.sub_token` (minted at user
+creation, rotated by `POST /api/admin/users/{u}/sub-token`), the endpoint
+is `src/routers/sub.ts` over `subscription_service`, and the aggregation is
+shared with the admin links route via `link_service.userLinks` — the body
+is that endpoint's list, base64-encoded. Entitlement (`isEntitled`) treats
+`expire` null or 0 as never; every not-entitled state, including an unknown
+token, is a `200` empty body with `no-store`. The SPA shows the URL, copy,
+QR, and rotation on a `SubscriptionCard` in the share dialog and the user
+edit page. Proof: `tests/workerd/subscriptions.test.ts` (all seven criteria
+in `docs/M6-PLAN.md`) plus the untouched admin-links tests; the live local
+smoke passed end to end. The operator-run item is importing a real
+subscription URL into a client app against the deployed plane.
 
 ### M7 — Stats and dashboard
 

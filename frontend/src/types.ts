@@ -60,6 +60,9 @@ export interface UserOut {
   status: string;
   expire: number | null;
   note: string | null;
+  /** The subscription capability token, plaintext (docs/M6-PLAN.md). */
+  sub_token: string | null;
+  sub_token_created_at: number | null;
   created_at: number;
   access: Record<string, AccessOut>;
 }
@@ -97,6 +100,13 @@ export interface UserLinksOut {
   username: string;
   links: ShareLink[];
   warnings: string[];
+}
+
+/** POST /api/admin/users/{username}/sub-token — mint or rotate. */
+export interface SubTokenOut {
+  username: string;
+  sub_token: string;
+  created_at: number;
 }
 
 /** GET /api/admin/nodes/{id}/inbounds — one inbound summary. */

@@ -27,6 +27,7 @@ import EmptyState from "../components/EmptyState";
 import ErrorNote from "../components/ErrorNote";
 import Field from "../components/Field";
 import { inputClass, primaryButton, secondaryButton } from "../components/styles";
+import SubscriptionCard from "../components/SubscriptionCard";
 import type { AccessForm, NodeAccessSection } from "../lib/access";
 import {
   emptyAccessForm,
@@ -182,6 +183,11 @@ export default function UserEditPage() {
           ))
         )}
       </section>
+      {isEdit && (
+        <div className="pt-2">
+          <SubscriptionCard username={username!} />
+        </div>
+      )}
       <div className="flex gap-2">
         <button type="submit" className={primaryButton} disabled={busy}>
           {busy ? "Saving…" : isEdit ? "Save changes" : "Create user"}

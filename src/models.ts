@@ -238,17 +238,35 @@ export type AccessOut = z.infer<typeof AccessOut>;
  * WHAT: the JSON the API returns for one user.
  *
  * WHY access is nested by node: membership is per-node stored data; the
- * admin sees exactly the shape they edit.
+ * admin sees exactly the shape they edit. WHY sub_token rides along: the
+ * SPA builds the subscription URL from it, and a second GET would be a
+ * round trip for a field the row already carries. Plaintext, like storage.
  */
 export const UserOut = z.object({
   username: z.string(),
   status: z.string(),
   expire: z.int().nullable(),
   note: z.string().nullable(),
+  sub_token: z.string().nullable(),
+  sub_token_created_at: z.int().nullable(),
   created_at: z.int(),
   access: z.record(z.string(), AccessOut),
 });
 export type UserOut = z.infer<typeof UserOut>;
+
+/**
+ * WHAT: response for POST /api/admin/users/{username}/sub-token.
+ *
+ * WHY the plaintext appears here: the URL is the product — shown on every
+ * rotation (and once at create time, which is also a rotation), stored
+ * plaintext, never returned by any other endpoint.
+ */
+export const SubTokenOut = z.object({
+  username: z.string(),
+  sub_token: z.string(),
+  created_at: z.int(),
+});
+export type SubTokenOut = z.infer<typeof SubTokenOut>;
 
 /** WHAT: one generated VLESS share link, carrying its own node. */
 export const ShareLink = z.object({

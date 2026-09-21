@@ -36,6 +36,8 @@ async function makeUser(username: string): Promise<void> {
     status: "active",
     expire: null,
     note: null,
+    sub_token: null,
+    sub_token_created_at: null,
     created_at: 1,
   });
 }

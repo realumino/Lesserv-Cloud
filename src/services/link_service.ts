@@ -22,10 +22,50 @@ import {
 } from "./qualify_service";
 import { keyMap } from "./reality_service";
 import { userShape } from "./render_service";
-import { type LinkUser, linksForUser, type ShareLink } from "./share_service";
+import {
+  hasUsableAddress,
+  type LinkUser,
+  linksForUser,
+  type ShareLink,
+} from "./share_service";
 
 /** WHAT: a JSON object carrying authored or qualified config data. */
 type Dict = Record<string, unknown>;
+
+/**
+ * WHAT: one generated link after its owning node id is stamped on.
+ *
+ * WHY the node id rides on each link: a subscription (M6) joins links from
+ * several nodes, and each link must carry its own node's address and key
+ * derivation. Warnings are prefixed with the node id so a multi-node list
+ * stays readable.
+ */
+export type LinkOut = ShareLink & { node: string };
+
+/** WHAT: an access row paired with the node it points at (null if deleted). */
+type AccessPair = [db.AccessRow, db.NodeRow | null];
+
+/** WHAT: a config-bearing entry ready for link generation. */
+type LinkEntry = [db.AccessRow, db.NodeRow, db.LinkProfileRow[]];
+
+/**
+ * WHAT: everything the two link presentations (admin JSON, subscription
+ * body) need from one aggregation pass.
+ *
+ * WHY counts instead of pre-thrown errors: the admin route maps them to
+ * 503/409 and the subscription route ignores them — the aggregation itself
+ * must not know HTTP.
+ */
+export type UserLinks = {
+  links: LinkOut[];
+  warnings: string[];
+  /** Access rows on the user, regardless of node state. */
+  accessCount: number;
+  /** Rows whose node exists and has a config. */
+  withConfigCount: number;
+  /** Config-bearing nodes that can produce at least one link. */
+  addressableCount: number;
+};
 
 /**
  * WHAT: return true only for a non-empty object (not an array).
@@ -146,4 +186,134 @@ export async function nodeLinks(
     ...danglingProfileWarnings(node.config_json as Dict, profiles),
   );
   return [links, warnings];
+}
+
+/** WHAT: return one user's access rows paired with their node rows. */
+async function accessPairs(env: Env, username: string): Promise<AccessPair[]> {
+  const pairs: AccessPair[] = [];
+  for (const row of await db.listAccessForUser(env.DB, username)) {
+    pairs.push([row, await db.getNode(env.DB, row.node_id)]);
+  }
+  return pairs;
+}
+
+/**
+ * WHAT: separate configless-node warnings from config-bearing pairs.
+ *
+ * WHY two outputs: the skipped ids become warnings and the rest flow into
+ * link generation, so the aggregation never has to re-walk the pairs. The
+ * warning names the node from the access row, so a dangling access row
+ * cannot crash the list (the Python version reached through the null node).
+ */
+function splitConfigPairs(pairs: AccessPair[]): [string[], [db.AccessRow, db.NodeRow][]] {
+  const skipped: string[] = [];
+  const withConfig: [db.AccessRow, db.NodeRow][] = [];
+  for (const [row, node] of pairs) {
+    if (node === null || node.config_json === null) {
+      skipped.push(`${row.node_id}: has no config; skipped`);
+      continue;
+    }
+    withConfig.push([row, node]);
+  }
+  return [skipped, withConfig];
+}
+
+/**
+ * WHAT: return config-bearing entries that can produce at least one link.
+ *
+ * WHY the profile addresses are part of the check: a profile may supply the
+ * client-facing address even when the node has none, so an entry is
+ * addressable if any of its views is.
+ */
+async function addressableEntries(
+  env: Env,
+  withConfig: [db.AccessRow, db.NodeRow][],
+): Promise<LinkEntry[]> {
+  const entries: LinkEntry[] = [];
+  for (const [row, node] of withConfig) {
+    const profiles = await db.listLinkProfiles(env.DB, node.id);
+    const profileAddresses = profiles.map(
+      (profile) => profile.overrides["address"],
+    );
+    if (
+      hasUsableAddress(
+        node.config_json as Record<string, unknown>,
+        node.address,
+        profileAddresses,
+      )
+    ) {
+      entries.push([row, node, profiles]);
+    }
+  }
+  return entries;
+}
+
+/** WHAT: warn for config-bearing nodes that cannot produce a usable address. */
+function unaddressableWarnings(
+  withConfig: [db.AccessRow, db.NodeRow][],
+  entries: LinkEntry[],
+): string[] {
+  const addressable = new Set(entries.map(([, node]) => node.id));
+  return withConfig
+    .filter(([, node]) => !addressable.has(node.id))
+    .map(([, node]) => `${node.id}: has no usable address`);
+}
+
+/**
+ * WHAT: build every link across the user's config-bearing nodes.
+ *
+ * WHY the per-node prefix on warnings: a multi-node list stays readable
+ * when each entry names its node; the order (skipped, per-node,
+ * unaddressable) is part of the tested contract.
+ */
+async function collectLinks(
+  env: Env,
+  userStatus: string,
+  entries: LinkEntry[],
+): Promise<[LinkOut[], string[]]> {
+  const links: LinkOut[] = [];
+  const warnings: string[] = [];
+  for (const [row, node, profiles] of entries) {
+    const [generated, nodeWarnings] = await nodeLinks(
+      env,
+      node,
+      row,
+      userStatus,
+      profiles,
+    );
+    for (const link of generated) {
+      links.push({ ...link, node: node.id });
+    }
+    warnings.push(...nodeWarnings.map((warning) => `${node.id}: ${warning}`));
+  }
+  return [links, warnings];
+}
+
+/**
+ * WHAT: aggregate every link the user is entitled to, across every node.
+ *
+ * WHY this lives in the service and not the router: the admin links route
+ * and the subscription body (M6) are two presentations of one list, and
+ * keeping the walk here means they can never disagree. It is read-only —
+ * generating links must not write, render, or sync. Status codes are the
+ * caller's business: the counts expose the same boundaries the router used
+ * to compute inline.
+ */
+export async function userLinks(
+  env: Env,
+  username: string,
+  status: string,
+): Promise<UserLinks> {
+  const pairs = await accessPairs(env, username);
+  const [skipped, withConfig] = splitConfigPairs(pairs);
+  const entries = await addressableEntries(env, withConfig);
+  const [links, entryWarnings] = await collectLinks(env, status, entries);
+  const warnings = [...skipped, ...entryWarnings, ...unaddressableWarnings(withConfig, entries)];
+  return {
+    links,
+    warnings,
+    accessCount: pairs.length,
+    withConfigCount: withConfig.length,
+    addressableCount: entries.length,
+  };
 }

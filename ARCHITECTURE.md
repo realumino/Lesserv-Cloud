@@ -266,7 +266,7 @@ that describes something belonging to a specific machine.
 | `nodes` | `id` (`tokyo01`) | M1 | identity, label, public `address`, the agent-reported `reported_address`, the authored `config_json`, token hash, applied hash, last-seen, health, versions, last error |
 | `user_node_access` | `(username, node_id)` | M1 | node membership plus `allowed_inbounds`, `allowed_outbounds`, and the `uuids` map keyed by local outbound |
 | `reality_keys` | `(node_id, inbound_tag)` | M1 | panel-generated X25519 private keys; one per REALITY inbound, many allowed per node |
-| `users` | `username` | M1 | global identity: status, expiry, note |
+| `users` | `username` | M1 | global identity: status, expiry, note; the plaintext subscription token (`sub_token`) and its mint time (M6) |
 | `link_profiles` | `(node_id, id)` | M2 | per-inbound client-side variants (CDN and similar) |
 | `config_versions` | `id` | later | history of rendered configs per node, for diff and rollback |
 | `node_stats` | `(node_id, email)` | M7 | traffic counters |
@@ -368,8 +368,18 @@ only, never log the `Authorization` header, and rotate on suspicion.
 **End user.** No identity, no login — clients can't do SSO. `/sub/{token}`
 is a capability URL: whoever holds it is the user. That is the accepted
 model in this ecosystem, so the design work is bounding the blast radius —
-unguessable tokens, instant rotation, `Cache-Control: no-store`, and a body
-that contains nothing but the links.
+unguessable tokens (256 bits, base64url), instant rotation,
+`Cache-Control: no-store`, and a body that contains nothing but the links.
+
+Since M6 the token lives in plaintext in `users.sub_token` — the opposite
+choice from the node token, and deliberate: the subscription URL is the
+user's property and the admin must be able to re-display it, while a
+database dump already contains every UUID the links would reveal, so
+hashing would protect nothing that is not already exposed. The unique
+index on the column is the lookup; 256 bits of entropy is why no
+constant-time compare is needed. Rotation (`POST
+/api/admin/users/{u}/sub-token`) replaces the value in one statement, so
+the old URL dies immediately and every client must re-import.
 
 ## The admin SPA (M5)
 
@@ -416,7 +426,11 @@ one.
 The SPA holds no secrets and owns no authentication: Cloudflare Access
 protects it, a node token is shown once in a dialog and never persisted,
 and an expired Access session surfaces as a non-JSON response that the API
-client reports as "session may have expired".
+client reports as "session may have expired". The one user-scoped secret it
+does display is the subscription token (M6): the `SubscriptionCard` in the
+share dialog and the user edit page builds the URL from
+`window.location.origin` and the plaintext `UserOut.sub_token`, offers copy,
+QR, and rotation, and shows Generate for pre-M6 users whose token is null.
 
 ## Key custody
 
@@ -503,13 +517,26 @@ are cosmetic, renaming one never breaks a client — only a UUID change or a
 key rotation does. The same naming helper feeds the SPA: node and profile
 labels plus prettified local tags, with no display state stored anywhere.
 
-A **subscription** is the aggregation (M6): `/sub/{token}` returns base64
-of newline-joined URIs, covering every node the user is entitled to, each
-link carrying its own node's address. This is where the fleet model pays
-off for the user — granting access to a second node enriches an existing
-URL without the URL changing. A disabled or expired user gets an empty
-body rather than an error: their links are already gone from the server
-side, and an empty response tells the client nothing new.
+A **subscription** is the second presentation of that same list, live since
+M6. Every user is created with a rotatable `sub_token` (32 random bytes,
+base64url), and `GET /sub/{token}` returns standard base64 of the
+newline-joined URIs the user is entitled to — each link carrying its own
+node's address, because links are built per node from that node's address
+and keys. This is where the fleet model pays off for the user: granting
+access to a second node enriches an existing URL's body without the URL
+changing.
+
+The aggregation is literally shared: `link_service.userLinks` walks the
+user's access rows once, and the admin links route wraps it in the
+diagnostic status codes (404 unknown user, 503 nothing configured, 409 no
+usable address) while the subscription drops the warnings and never errors.
+The entitlement rule is `status === "active"` and the expiry not passed —
+with `expire` null or `0` meaning never — and anything else (unknown token,
+disabled, expired, no usable node) is a `200` with an empty body: a
+capability URL is held by client apps that can do nothing with a 404, and
+an empty response reveals nothing about whether a token exists. The body is
+`text/plain; charset=utf-8` with `Cache-Control: no-store`, and carries
+nothing but the encoded links.
 
 ## Life of a change: the admin edits a user
 

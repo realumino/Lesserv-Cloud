@@ -102,9 +102,23 @@ actor extraction exists yet (deferred to a later milestone).
 curl.exe -i https://cp.example.org/api/health            # 200
 curl.exe -i https://cp.example.org/api/admin/nodes       # 302 login
 curl.exe -i https://cp.example.org/admin/                # 302 login
-curl.exe -i https://cp.example.org/sub/x                 # app 404 (NOT a login redirect)
+curl.exe -i https://cp.example.org/sub/x                 # 200 empty body (NOT a login redirect)
 # agent surface, with a minted token:
 curl.exe -i https://cp.example.org/api/node/heartbeat -H "Authorization: Bearer <token>" -H "X-Lesserv-Node: <id>" ...
+```
+
+Subscription smoke (M6), with a user created through the admin API or SPA:
+
+```powershell
+# the subscription URL serves base64 text, not an Access challenge
+curl.exe -i https://cp.example.org/sub/<sub_token>       # 200 text/plain; cache-control: no-store
+# decode it locally to see the vless:// list:
+curl.exe -s https://cp.example.org/sub/<sub_token> | ForEach-Object { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($_.Trim())) }
+curl.exe -i https://cp.example.org/sub/nope              # 200 empty body — unknown tokens are never 404
+# rotate, then re-check the old URL: empty immediately, same status
+curl.exe -X POST https://cp.example.org/api/admin/users/<user>/sub-token
+curl.exe -i https://cp.example.org/sub/<old_token>       # 200 empty
+# disable the user: the URL returns empty, not an error
 ```
 
 The full endpoint sequence (create node → put config → mint token →

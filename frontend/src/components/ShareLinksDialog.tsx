@@ -14,6 +14,7 @@ import CopyButton from "./CopyButton";
 import EmptyState from "./EmptyState";
 import ErrorNote from "./ErrorNote";
 import Modal from "./Modal";
+import SubscriptionCard from "./SubscriptionCard";
 import { secondaryButton } from "./styles";
 import type { ShareLink } from "../types";
 
@@ -52,6 +53,9 @@ export default function ShareLinksDialog({
 
   return (
     <Modal title={`Share links for ${username}`} onClose={onClose} wide>
+      <div className="mb-4">
+        <SubscriptionCard username={username} />
+      </div>
       {error && <ErrorNote>{error}</ErrorNote>}
       {warnings.length > 0 && (
         <div className="space-y-1 rounded-xl border border-[#ffcc00]/30 bg-[#fff9e6] px-4 py-2">

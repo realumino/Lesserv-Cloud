@@ -7,12 +7,63 @@
  * render up on its next heartbeat (content-hash convergence).
  */
 
+import { base64UrlEncode } from "../core/x25519";
 import * as db from "../db";
-import type { AccessIn, AccessOut, UserCreate, UserOut, UserUpdate } from "../models";
+import type {
+  AccessIn,
+  AccessOut,
+  SubTokenOut,
+  UserCreate,
+  UserOut,
+  UserUpdate,
+} from "../models";
 
 /** WHAT: Unix seconds from the plane's clock (the time authority). */
-function nowSeconds(): number {
+export function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
+}
+
+const SUB_TOKEN_BYTES = 32;
+
+/**
+ * WHAT: mint one 32-byte random subscription token, base64url-encoded.
+ *
+ * WHY 256 bits in plaintext: the token is the capability URL itself — the
+ * admin must be able to re-display it, so it is never hashed (a dump already
+ * contains every UUID, so hashing would protect nothing). High entropy is
+ * what makes plaintext safe: the unique-index lookup cannot be brute-forced
+ * or timed, which is why the node token's hash-and-compare rules do not
+ * apply here. Drawn inside request handlers only (no module-scope entropy).
+ */
+export function mintSubToken(): string {
+  return base64UrlEncode(
+    crypto.getRandomValues(new Uint8Array(SUB_TOKEN_BYTES)),
+  );
+}
+
+/**
+ * WHAT: return true when the user may receive subscription links right now.
+ *
+ * WHY a pure function: `/sub` must decide entitlement identically on every
+ * request without touching config or access rows, and the rule has edge
+ * cases worth unit-testing: `expire` null or 0 means "never expires" (0 is
+ * the stored convention for never, matching the UI's fmtExpire), a timestamp
+ * at or before `at` means expired, and anything but `status: "active"` is
+ * out. Rendering and the admin links view never consult this — disabling a
+ * user removes their links from the *subscription*, exactly as the render
+ * removes them from the nodes.
+ */
+export function isEntitled(
+  user: { status: string; expire: number | null },
+  at: number,
+): boolean {
+  if (user.status !== "active") {
+    return false;
+  }
+  if (user.expire === null || user.expire === 0) {
+    return true;
+  }
+  return user.expire > at;
 }
 
 /**
@@ -116,12 +167,15 @@ export async function createUser(
   conn: D1Database,
   data: UserCreate,
 ): Promise<UserOut> {
+  const mintedAt = nowSeconds();
   await db.createUser(conn, {
     username: data.username,
     status: data.status,
     expire: data.expire,
     note: data.note,
-    created_at: nowSeconds(),
+    sub_token: mintSubToken(),
+    sub_token_created_at: mintedAt,
+    created_at: mintedAt,
   });
   await writeAccess(conn, data.username, data.access);
   return (await getUserWithAccess(conn, data.username)) as UserOut;
@@ -186,4 +240,27 @@ export async function deleteUser(
   }
   await db.deleteUser(conn, username);
   return true;
+}
+
+/**
+ * WHAT: mint and store a fresh subscription token; null when user missing.
+ *
+ * WHY replace, not generate-once: rotation is the revocation path — the old
+ * URL dies the instant the new token is stored, so a leaked URL is fixed
+ * with one POST and no other state changes. Pre-M6 rows (null token) get
+ * their first token through the same call, which is why it is "mint or
+ * rotate", never an error.
+ */
+export async function rotateSubToken(
+  conn: D1Database,
+  username: string,
+): Promise<SubTokenOut | null> {
+  const user = await db.getUser(conn, username);
+  if (user === null) {
+    return null;
+  }
+  const token = mintSubToken();
+  const createdAt = nowSeconds();
+  await db.setSubToken(conn, username, token, createdAt);
+  return { username, sub_token: token, created_at: createdAt };
 }

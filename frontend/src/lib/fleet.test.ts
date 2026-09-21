@@ -6,7 +6,14 @@ import type { NodeOut, NodeSyncOut } from "../types";
 import { fleetRows, fleetState } from "./fleet";
 
 function node(id: string): NodeOut {
-  return { id, label: id, address: "", created_at: 0, has_config: true };
+  return {
+    id,
+    label: id,
+    address: "",
+    reported_address: null,
+    created_at: 0,
+    has_config: true,
+  };
 }
 
 function sync(overrides: Partial<NodeSyncOut>): NodeSyncOut {

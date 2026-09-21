@@ -1,5 +1,10 @@
 # M0-FINDINGS.md — the platform viability verdict
 
+> **Historical record.** This file describes the Pyodide/Python era of the
+> project, which ended with the TypeScript rewrite in 2026. It is kept for
+> the constraints it documented, not as a description of the current
+> stack — see `AGENTS.md` and `docs/TS-REWRITE-PLAN.md` for those.
+
 The deliverable of M0 is a verdict, not code. This file is the evidence
 and the constraints that follow from it. Produced by the spike scaffold
 (`src/`, `tests/`, `migrations/0001_spike.sql`), which stays as the base

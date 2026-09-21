@@ -1,0 +1,280 @@
+{
+  "vectors": [
+    {
+      "name": "string with BMP and astral characters",
+      "value": "caf\u00e9 \ud83d\ude00",
+      "python": "\"caf\\u00e9 \\ud83d\\ude00\""
+    },
+    {
+      "name": "control characters",
+      "value": "\u0000\u0001\b\f\n\r\t\u001f",
+      "python": "\"\\u0000\\u0001\\b\\f\\n\\r\\t\\u001f\""
+    },
+    {
+      "name": "quote and backslash",
+      "value": "say \"hi\" \\ there",
+      "python": "\"say \\\"hi\\\" \\\\ there\""
+    },
+    {
+      "name": "DEL stays literal",
+      "value": "\u007f",
+      "python": "\"\\u007f\""
+    },
+    {
+      "name": "positive integer",
+      "value": 42,
+      "python": "42"
+    },
+    {
+      "name": "negative integer",
+      "value": -7,
+      "python": "-7"
+    },
+    {
+      "name": "zero",
+      "value": 0,
+      "python": "0"
+    },
+    {
+      "name": "simple float",
+      "value": 0.1,
+      "python": "0.1"
+    },
+    {
+      "name": "negative float",
+      "value": -2.5,
+      "python": "-2.5"
+    },
+    {
+      "name": "small exponent",
+      "value": 1e-05,
+      "python": "1e-05"
+    },
+    {
+      "name": "large exponent",
+      "value": 1e+21,
+      "python": "1e+21"
+    },
+    {
+      "name": "fixed lower bound",
+      "value": 0.0001,
+      "python": "0.0001"
+    },
+    {
+      "name": "shortest digits",
+      "value": 1.5e-07,
+      "python": "1.5e-07"
+    },
+    {
+      "name": "negative zero float",
+      "value": -0.0,
+      "python": "-0.0"
+    },
+    {
+      "name": "true",
+      "value": true,
+      "python": "true"
+    },
+    {
+      "name": "false",
+      "value": false,
+      "python": "false"
+    },
+    {
+      "name": "null",
+      "value": null,
+      "python": "null"
+    },
+    {
+      "name": "nested list",
+      "value": [
+        1,
+        [
+          2,
+          [
+            3,
+            null
+          ]
+        ],
+        {
+          "a": [
+            true,
+            false
+          ]
+        }
+      ],
+      "python": "[1,[2,[3,null]],{\"a\":[true,false]}]"
+    },
+    {
+      "name": "object key order",
+      "value": {
+        "b": 1,
+        "a": 2,
+        "C": 3
+      },
+      "python": "{\"C\":3,\"a\":2,\"b\":1}"
+    },
+    {
+      "name": "astral key before BMP in UTF-16 only",
+      "value": {
+        "\ud83d\ude00": 1,
+        "\ufffd": 2,
+        "a": 3
+      },
+      "python": "{\"a\":3,\"\\ufffd\":2,\"\\ud83d\\ude00\":1}"
+    },
+    {
+      "name": "nested objects",
+      "value": {
+        "z": {
+          "y": [
+            1,
+            2
+          ]
+        },
+        "a": {
+          "b": 3
+        }
+      },
+      "python": "{\"a\":{\"b\":3},\"z\":{\"y\":[1,2]}}"
+    },
+    {
+      "name": "empty containers",
+      "value": [
+        [],
+        {},
+        ""
+      ],
+      "python": "[[],{},\"\"]"
+    },
+    {
+      "name": "lone surrogate",
+      "value_units": [
+        55296
+      ],
+      "python": "\"\\ud800\""
+    }
+  ],
+  "known_limits": [
+    {
+      "name": "whole-number float",
+      "value": 100.0,
+      "python": "100.0",
+      "typescript": "100",
+      "why": "after JSON.parse the value is the integer 100; Python keeps the float form"
+    },
+    {
+      "name": "whole-number float in fixed range",
+      "value": 1000000000000000.0,
+      "python": "1000000000000000.0",
+      "typescript": "1000000000000000",
+      "why": "same integer/float ambiguity as 100.0; only the pre-cutover audit can see stored occurrences"
+    },
+    {
+      "name": "whole-number float at the exponent boundary",
+      "value": 1e+16,
+      "python": "1e+16",
+      "typescript": "10000000000000000",
+      "why": "Python repr switches to 1e+16 here, JS String() prints the full integer digits"
+    },
+    {
+      "name": "integer beyond 2^53",
+      "value": 12345678901234567890,
+      "python": "12345678901234567890",
+      "typescript": "12345678901234567000",
+      "why": "JSON.parse rounds it to a double; Python ints are arbitrary precision"
+    }
+  ],
+  "rendered_config": {
+    "config": {
+      "log": {
+        "loglevel": "warning"
+      },
+      "inbounds": [
+        {
+          "tag": "reality-tokyo01",
+          "listen": "0.0.0.0",
+          "port": 443,
+          "protocol": "vless",
+          "settings": {
+            "clients": [
+              {
+                "id": "11111111-1111-1111-1111-111111111111",
+                "email": "alice@tokyo01-japan"
+              }
+            ],
+            "decryption": "none",
+            "flow": "xtls-rprx-vision"
+          },
+          "streamSettings": {
+            "network": "raw",
+            "security": "reality",
+            "realitySettings": {
+              "target": "apple.com:443",
+              "serverNames": [
+                "apple.com"
+              ],
+              "shortIds": [
+                "1234"
+              ],
+              "privateKey": "sMS4KcvOCag9dZsYPa3sFfVLSn3IGNEI34B7ENhGBFE"
+            }
+          }
+        },
+        {
+          "tag": "xhttp-tokyo01",
+          "listen": "0.0.0.0",
+          "port": 8080,
+          "protocol": "vless",
+          "settings": {
+            "clients": [
+              {
+                "id": "11111111-1111-1111-1111-111111111111",
+                "email": "alice@tokyo01-japan"
+              }
+            ],
+            "decryption": "none"
+          },
+          "streamSettings": {
+            "network": "xhttp",
+            "security": "none",
+            "xhttpSettings": {
+              "path": "/x",
+              "host": "cdn.example.com"
+            }
+          }
+        }
+      ],
+      "outbounds": [
+        {
+          "tag": "BLOCK",
+          "protocol": "blackhole"
+        },
+        {
+          "tag": "tokyo01-japan",
+          "protocol": "freedom"
+        }
+      ],
+      "routing": {
+        "domainStrategy": "IPIfNonMatch",
+        "rules": [
+          {
+            "domain": [
+              "example.com"
+            ],
+            "outboundTag": "tokyo01-japan"
+          },
+          {
+            "user": [
+              "regexp:.*@tokyo01-japan$"
+            ],
+            "outboundTag": "tokyo01-japan"
+          }
+        ]
+      }
+    },
+    "warnings": [],
+    "canonical": "{\"inbounds\":[{\"listen\":\"0.0.0.0\",\"port\":443,\"protocol\":\"vless\",\"settings\":{\"clients\":[{\"email\":\"alice@tokyo01-japan\",\"id\":\"11111111-1111-1111-1111-111111111111\"}],\"decryption\":\"none\",\"flow\":\"xtls-rprx-vision\"},\"streamSettings\":{\"network\":\"raw\",\"realitySettings\":{\"privateKey\":\"sMS4KcvOCag9dZsYPa3sFfVLSn3IGNEI34B7ENhGBFE\",\"serverNames\":[\"apple.com\"],\"shortIds\":[\"1234\"],\"target\":\"apple.com:443\"},\"security\":\"reality\"},\"tag\":\"reality-tokyo01\"},{\"listen\":\"0.0.0.0\",\"port\":8080,\"protocol\":\"vless\",\"settings\":{\"clients\":[{\"email\":\"alice@tokyo01-japan\",\"id\":\"11111111-1111-1111-1111-111111111111\"}],\"decryption\":\"none\"},\"streamSettings\":{\"network\":\"xhttp\",\"security\":\"none\",\"xhttpSettings\":{\"host\":\"cdn.example.com\",\"path\":\"/x\"}},\"tag\":\"xhttp-tokyo01\"}],\"log\":{\"loglevel\":\"warning\"},\"outbounds\":[{\"protocol\":\"blackhole\",\"tag\":\"BLOCK\"},{\"protocol\":\"freedom\",\"tag\":\"tokyo01-japan\"}],\"routing\":{\"domainStrategy\":\"IPIfNonMatch\",\"rules\":[{\"domain\":[\"example.com\"],\"outboundTag\":\"tokyo01-japan\"},{\"outboundTag\":\"tokyo01-japan\",\"user\":[\"regexp:.*@tokyo01-japan$\"]}]}}",
+    "sha256": "c301dbccc8820a5518798ee56bef4be1e3773c9e8edc87b85ade676461b87d91"
+  }
+}

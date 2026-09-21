@@ -83,7 +83,8 @@ function FleetTable({ rows }: { rows: FleetRow[] }) {
         <thead>
           <tr className="border-b border-apple-border bg-apple-gray-surface text-left text-xs uppercase tracking-wide text-apple-muted">
             <Th>Node</Th>
-            <Th>Address</Th>
+            <Th>Domain</Th>
+            <Th>Reported IP</Th>
             <Th>State</Th>
             <Th>Health</Th>
             <Th>Last seen</Th>
@@ -105,6 +106,7 @@ function FleetTable({ rows }: { rows: FleetRow[] }) {
                 <span className="ml-2 font-mono text-xs text-apple-muted">{node.id}</span>
               </Td>
               <Td className="text-apple-muted">{node.address || "—"}</Td>
+              <Td className="text-apple-muted">{node.reported_address || "—"}</Td>
               <Td>
                 <span className="flex items-center gap-2">
                   <Badge tone={STATE_TONE[state]}>{STATE_LABEL[state]}</Badge>
@@ -141,11 +143,14 @@ function FleetTable({ rows }: { rows: FleetRow[] }) {
   );
 }
 
-/** Create a node with the three fields the API requires. */
+/**
+ * Create a node with the identity the admin must choose. The share-link
+ * domain is set later on the node page, and the node's reported IP shows
+ * up on its own after the agent enrolls — neither belongs in this form.
+ */
 function CreateNodeForm({ onCreated }: { onCreated: (id: string) => void }) {
   const [id, setId] = useState("");
   const [label, setLabel] = useState("");
-  const [address, setAddress] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -156,7 +161,6 @@ function CreateNodeForm({ onCreated }: { onCreated: (id: string) => void }) {
     const result = await createNode({
       id: id.trim(),
       label: label.trim(),
-      address: address.trim(),
     });
     setBusy(false);
     if (result.error) {
@@ -190,14 +194,6 @@ function CreateNodeForm({ onCreated }: { onCreated: (id: string) => void }) {
             value={label}
             onChange={(event) => setLabel(event.target.value)}
             placeholder="Tokyo 01"
-          />
-        </Field>
-        <Field label="Address">
-          <input
-            className={inputClass}
-            value={address}
-            onChange={(event) => setAddress(event.target.value)}
-            placeholder="tokyo01.example.org"
           />
         </Field>
         <button

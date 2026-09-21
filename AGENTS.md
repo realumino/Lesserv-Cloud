@@ -14,6 +14,14 @@ it in the same commit that changes code; wrong documentation is worse than
 none. The cross-repo contract with the agent lives in `docs/PROTOCOL.md`
 and is versioned (`protocol: 1`).
 
+The plane is TypeScript on workerd: Hono + Zod + `@noble/curves`, Vitest
+inside the same runtime, no bridge of any kind. It was ported from the
+Python plane (FastAPI on Pyodide) in 2026; the execution record is
+`docs/TS-REWRITE-PLAN.md`. Two modules exist only for byte parity and are
+load-bearing, not cleanup targets: `src/core/python_json.ts` backs
+`config_hash` (the agent's convergence contract) and `src/core/python_uri.ts`
+backs `vless://` share links.
+
 ## What this is
 
 One control plane, N **independent** nodes. Nodes never talk to each
@@ -74,11 +82,15 @@ These were settled deliberately; do not relitigate them in passing.
 ## Run it
 
 ```
-uv run pywrangler dev                                          # the Worker + local D1, no CF account needed
+npm install                                                    # root deps: Worker, tests, tooling
+npm run dev                                                    # the Worker + local D1, no CF account needed
 npx wrangler d1 migrations apply <d1-database-name> --local    # dev database schema
 npx wrangler d1 migrations apply <d1-database-name> --remote   # production schema
-uv run python -m unittest discover -s tests/pure -t . -v       # pure tests (~1s, no Node)
-uv run python -m unittest discover -s tests/workerd -t . -v    # black-box tests against a live plane (~30s)
+npm test                                                       # the whole suite, inside workerd (~15s)
+npm run test:watch                                             # the same suite on watch
+npm run typecheck                                              # tsc --noEmit for src/ and tests/
+npm run build                                                  # wrangler deploy --dry-run (the deploy gate)
+npm run types                                                  # regenerate worker-configuration.d.ts
 
 npm --prefix frontend install                                  # first time only
 npm --prefix frontend run dev                                  # Vite dev server, proxies /api to the local plane (:8787)
@@ -86,23 +98,31 @@ npm --prefix frontend test                                     # frontend pure-l
 npm --prefix frontend run build                                # tsc --noEmit + vite build -> frontend/dist
 ```
 
-The app runs **only** under workerd (`src/worker.py`, started by
-`pywrangler dev`); there is no second entrypoint and no SQLite backend.
-Tests reflect that: `tests/pure/` imports only pure modules under the
-uv-venv interpreter (they run identically in Pyodide), and
-`tests/workerd/` boots a real plane on a throwaway `--persist-to` D1 and
-talks HTTP to it. Dev needs a `.dev.vars` with `REALITY_KEY_SECRET` (see
-`.dev.vars.example`) — without it, every REALITY key endpoint fails
-loudly by design.
+The app runs **only** under workerd (`src/worker.ts`, the default export of
+the Hono app built in `src/main.ts`); there is no second entrypoint, no
+Node-compat path, and no `node:` imports. The build enforces that where the
+Python static tests used to: `tsc --noEmit` type-gates, `npm test` executes
+the code inside workerd itself, and `npm run build` bundles with wrangler.
+Tests live in two tiers under one command: `tests/pure/` exercises modules
+that compute objects (no bindings), and `tests/workerd/` drives the whole
+Worker over `fetch()` against a real D1, with `migrations/*.sql` applied by
+`readD1Migrations`/`applyD1Migrations` in the setup file.
 
-Since M4 the deployed plane is the real thing: a Python Worker + D1 +
-Access + static assets (hostname and resource ids are operator-specific
-and kept out of this public repo). The deploy runbook — D1
-migrations, the `REALITY_KEY_SECRET` secret, the Access applications, and
-the post-deploy smoke checks — lives in `docs/DEPLOY.md` and must be kept
-current by every deploy that changes a step. Real values (hostname, D1
-name/id) go in a gitignored `wrangler.local.jsonc`, never in committed
-files.
+Dev needs a `.dev.vars` with `REALITY_KEY_SECRET` (see `.dev.vars.example`)
+— without it, every REALITY key endpoint fails loudly by design. The
+wrangler config works the same way: the committed `wrangler.example.jsonc`
+is the template, and the gitignored `wrangler.jsonc` that wrangler reads
+is copied from it by the npm pre-hooks when missing (the placeholders are
+fine for dev and tests; the copy gets the real values before a deploy).
+
+Since M4 the deployed plane is the real thing: a Worker + D1 + Cloudflare
+Access + static assets (hostname and resource ids are operator-specific and
+kept out of this public repo). The deploy runbook — D1 migrations, the
+`REALITY_KEY_SECRET` secret, the Access applications, and the post-deploy
+smoke checks — lives in `docs/DEPLOY.md` and must be kept current by every
+deploy that changes a step. Real values (hostname, D1 name/id) go in the
+gitignored `wrangler.jsonc`, seeded from the committed
+`wrangler.example.jsonc`, never in committed files.
 
 The admin SPA lives under `frontend/` (React + React Router + Tailwind
 v4, built by Vite with base `/admin/`) and is served from static assets;
@@ -110,49 +130,59 @@ v4, built by Vite with base `/admin/`) and is served from static assets;
 real routes (`/admin/nodes`, `/admin/nodes/:id/config`, ...). Its pure
 logic is unit-tested with vitest; the API is not reimplemented there.
 `frontend/dist/` is gitignored and produced by
-`npm --prefix frontend run build`; the workerd test tier writes a stub
-when it is absent, so tests do not require a build. One entrypoint, one
-app: `src/worker.py`
-(`asgi.entrypoint`, D1). The import root is `src/`, so imports
-inside the app are flat (`from core.x25519 import ...`); pure tests get
-the same root from the shim in `tests/__init__.py`. Evidence and
-constraints from the M0 spike: `docs/M0-FINDINGS.md`.
+`npm --prefix frontend run build`; `scripts/stub_frontend_dist.mjs` writes
+stub indexes when it is absent, so a fresh clone can boot and deploy-check
+without a SPA build. One entrypoint, one app: `src/worker.ts`. Imports
+inside `src/` are relative paths (`../core/x25519`). Evidence and
+constraints from the M0 spike: `docs/M0-FINDINGS.md` (Pyodide era,
+historical).
 
 ## Conventions (user requirement — non-negotiable)
 
-- Every function: docstring explaining WHAT it does and WHY it exists.
-- Functions under ~30 lines, one job each. Plain dicts/lists, no clever
+- Every function: a docstring explaining WHAT it does and WHY it exists
+  (JSDoc-style blocks in TS, the ported Python docstrings' content).
+- Functions under ~30 lines, one job each. Plain objects/arrays, no clever
   abstractions.
-- Dependencies must be justifiable; keep them minimal.
+- Dependencies must be justifiable; keep them minimal — Hono, Zod, and
+  `@noble/curves` are the whole runtime surface, and nothing else gets
+  added without the same kind of reason.
 - User reads every file before moving to the next milestone; explain code,
   don't just generate it.
 - `ARCHITECTURE.md` is updated in the same commit as the code it describes.
 
 ## Gotchas
 
-- **workerd is the only runtime; there is no compatibility path.** The app
-  executes only inside workerd/Pyodide. `src/` must never grow branches
-  that exist for another environment (no `sqlite3`, no uvicorn, no
-  plaintext fallbacks outside workerd) — `tests/pure/test_no_environment_compat.py`
-  enforces it. Anything that needs bindings, HTTP, or the database is
-  tested black-box in `tests/workerd/`.
+- **workerd is the only runtime.** `src/` must never grow `node:` imports,
+  environment branches, or a second entrypoint. Anything that needs
+  bindings, HTTP, or the database is tested black-box in `tests/workerd/`;
+  whatever typechecks and bundles is what ships.
 - **Pure is sync, I/O is async.** `core/` and the pure services
   (`qualify_service`, `config_service`, `share_service`) are ordinary
-  synchronous Python — they compute dicts. Anything touching D1 is `async`
-  and must be awaited: D1 has no synchronous API, so every router and
-  service that reads or writes is `async def`. That asymmetry is the
-  convention, not an accident.
-- **No entropy at import time.** Cloudflare poisons the PRNG before the
-  deploy-time memory snapshot; `os.urandom`/`uuid4` in top-level scope
-  fails the deploy. Key generation and UUID minting happen inside request
-  handlers only — `tests/pure/test_import_hygiene.py` enforces it.
-- **FFI conversions are explicit.** `bytes` needs an explicit
-  `Uint8Array`, and lists passed to WebCrypto (e.g. `keyUsages`) must be
-  real JS Arrays via `to_js`. Keep `from js import ...` inside functions:
-  outside workerd that import raises, and only `crypto.py` may touch it.
-- **Workers have no filesystem that persists, and no subprocess.** `db.py`
-  is the only file containing SQL, and it talks to D1 through bindings
-  (the local `pywrangler dev` D1 is real D1 semantics on disk). The
+  synchronous functions — they compute objects. Anything touching D1 is
+  `async` and must be awaited: D1 has no synchronous API, so every router
+  and service that reads or writes is `async`. That asymmetry is the
+  convention, not an accident. `config_hash` is async too, because
+  WebCrypto's digest is the only SHA-256 in workerd.
+- **`env` is passed, never global.** Bindings arrive on the Hono context
+  (`c.env`); services that need them take `env` (or `env.DB`) as an
+  argument. Nothing captures a binding at module scope.
+- **No entropy at module scope.** Keep key generation and UUID minting
+  inside request handlers; module-scope `crypto` calls are a Workers
+  deploy hazard and a cached-per-isolate surprise.
+- **Canonical JSON is not `JSON.stringify`.** `config_hash` hashes
+  Python's `json.dumps(sort_keys=True, separators=(",", ":"))` byte for
+  byte, which is why `src/core/python_json.ts` exists (ASCII escapes,
+  code-point key order, float repr). Never "simplify" it to
+  `JSON.stringify`: the hash is the agent's convergence contract, and a
+  different hash makes every node re-apply. `python_uri.ts` is the same
+  deal for share links.
+- **WebCrypto wants buffers, not strings.** Encode with `TextEncoder`,
+  pass `ArrayBuffer`/typed arrays, and keep base64/hex helpers in
+  `crypto.ts` and `core/x25519.ts` rather than open-coding conversions at
+  call sites.
+- **Workers have no filesystem that persists, and no subprocess.** `db.ts`
+  is the only file containing SQL, and it talks to D1 through the binding
+  (the local `wrangler dev` D1 is real D1 semantics on disk). The
   archived panel's `xray_service.py` has no counterpart here — process
   management is entirely the agent's job.
 - **Never store a qualified tag.** Tags are local and scoped by
@@ -164,3 +194,5 @@ constraints from the M0 spike: `docs/M0-FINDINGS.md`.
   in Cloudflare Access, not in this code. `/api/admin/*` (Access),
   `/api/node/*` (node token), `/sub/*` (capability token), `/api/health`.
   Anything outside those four must 404 — fail closed, never fail open.
+- **`worker-configuration.d.ts` is generated and committed.** After a
+  binding or secret change, rerun `npm run types`; do not hand-edit it.

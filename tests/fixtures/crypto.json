@@ -1,0 +1,18 @@
+{
+  "standard_vector": {
+    "name": "mcgrew-viega-2004-tc14-aes-256-gcm",
+    "key_hex": "feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308",
+    "iv_hex": "cafebabefacedbaddecaf888",
+    "plaintext_hex": "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b391aafd255",
+    "ciphertext_hex": "522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662898015ad",
+    "tag_hex": "b094dac5d93471bdec1a502270e3cc6c",
+    "stored": "v1:yv66vvrO263eyviIUi3B8JlWfQf0fzejKoRCfWQ6jNy/5cDJdZiivSVV0aqMsI5IWQ27PaewixBWgog4xfYeY5O6egq8yfZiiYAVrbCU2sXZNHG97BpQInDjzGw="
+  },
+  "sealed_key": {
+    "secret_b64": "0YWCXqaomoiyK6u7hKPynnezUFEnB+tdXXD3bXiNVgA=",
+    "iv_hex": "4118ebf5f66a207c8deb1645",
+    "ciphertext_hex": "7e58a832697f6518d615dec2f06164d7c02a4345bf17a6497091febec3bca5b481b06c084c483803e9e0925fcfc0708a537f48090ea9099f1e7d27",
+    "plaintext": "sMS4KcvOCag9dZsYPa3sFfVLSn3IGNEI34B7ENhGBFE",
+    "stored": "v1:QRjr9fZqIHyN6xZFflioMml/ZRjWFd7C8GFk18AqQ0W/F6ZJcJH+vsO8pbSBsGwITEg4A+ngkl/PwHCKU39ICQ6pCZ8efSc="
+  }
+}

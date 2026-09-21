@@ -51,12 +51,12 @@ protocol, which is why `docs/PROTOCOL.md` exists and carries a version.
 Browser (TS SPA at /admin, built by Vite, served as static assets)
    │  fetch /api/admin/*        (Cloudflare Access session)
    ▼
-Worker (Python, FastAPI)
+Worker (TypeScript, Hono)
    │
    ├── routers/*        HTTP concerns only: paths, status codes, JSON
    ├── services/*       business rules (render, qualify, reality, share)
-   ├── core/*           pure computation, no I/O (allocator, x25519)
-   └── db.py            the only file containing SQL
+   ├── core/*           pure computation, no I/O (allocator, x25519, parity formats)
+   └── db.ts            the only file containing SQL
    │
    ▼
 D1 (SQLite, at the edge, single primary for writes)
@@ -71,61 +71,63 @@ Worker → rendered config → agent writes it, restarts Xray, reports back
 
 Two rules keep this healthy, both inherited from the archived panel:
 requests flow **down only** (router → service → db, never reverse), and a
-module never knows about the layer above it. `db.py` has no idea HTTP
+module never knows about the layer above it. `db.ts` has no idea HTTP
 exists; routers have no idea SQL exists.
 
 ## One entrypoint, one runtime
 
 The app runs in exactly one place: workerd. There is no second entrypoint
-and no environment-conditional code — a test in `tests/pure/`
-(`test_no_environment_compat.py`) fails the build if `src/` ever imports
-`sqlite3`, `uvicorn`, or module-scope `js`/`workers` outside the
-entrypoint.
+and no environment-conditional code — where two Python static tests used
+to guard that (`test_no_environment_compat`, `test_import_hygiene`), the
+TypeScript toolchain does: `tsc --noEmit` rejects missing modules and
+`node:` imports, `npm test` executes the code inside workerd itself, and
+`npm run build` (a wrangler dry run) refuses anything that does not
+bundle.
 
 ```
-src/main.py      create_app() — routes, the route-group guard, nothing platform-specific
-src/worker.py    imports app, serves via workers.asgi (D1 arrives on the request scope)
+src/main.ts      the Hono app — routes, the route-group guard, onError/notFound JSON
+src/worker.ts    the default export; workerd calls fetch(request, env)
 ```
 
-The database is reached through the **conn interface**:
-`await conn.execute(sql, params) -> list[dict]`. `D1Conn` in `db.py`
-wraps the binding that the ASGI bridge places on `request.scope["env"]`,
-and a request-scoped dependency (`routers/deps.py:conn`) hands it to
-every router. The dependency lives in `routers/` and not `db.py` on
-purpose: FastAPI only recognizes a `Request` parameter through its type
-annotation, and that annotation is HTTP knowledge, which `db.py` must not
-have. Outside a Worker there is no database, so `get_conn` raises instead
-of pretending — the one-runtime rule stated as an error.
+Bindings arrive on the Hono context. `c.env.DB` is the D1 binding and is
+passed explicitly into the functions that read or write (`db.ts` takes
+`conn: D1Database`; the env-sensitive services take `env`), which replaces
+Python's request-scoped `routers/deps.py` wrapper. There is no ambient
+binding lookup, and nothing captures `env` at module scope.
 
 The schema comes from `migrations/*.sql`, and wrangler is the only runner
 (`d1 migrations apply`, local or remote — runbook and evidence in
-`docs/DEPLOY.md`). There is no in-app migration code: the local test
-plane applies the same files through the same wrangler path, so "what a
-fresh D1 builds" is exercised, not assumed.
+`docs/DEPLOY.md`). There is no in-app migration code: the workerd test tier
+applies the same files through the vitest plugin's migration helpers, so
+"what a fresh D1 builds" is exercised, not assumed.
 
-The import root is `src/` (the directory workerd treats as the module
-root), so application imports are flat: `from core.x25519 import ...`;
-pure tests get the same root from the shim in `tests/__init__.py`.
-Every module that ships must import cleanly with a poisoned PRNG (the
-deploy-time snapshot constraint — see `tests/pure/test_import_hygiene.py`,
-which runs the poison import in a subprocess). The spike evidence behind
-these shapes is in `docs/M0-FINDINGS.md`.
+Two modules are the port's deliberate oddity. `core/python_json.ts` and
+`core/python_uri.ts` reproduce CPython's canonical JSON and
+`urllib.parse.quote` semantics because both are observable bytes: the
+first is `config_hash` (the agent's convergence contract) and the second is
+every generated share link. They are parity code, not style — the same
+reason the Python tree had fixtures pinning them. Spike evidence and
+Pyodide-era constraints: `docs/M0-FINDINGS.md` (historical).
 
 ## How the tests run
 
-Three tiers, matching the three kinds of code:
+One command, `npm test`, runs every test inside workerd through the
+Cloudflare vitest plugin — tests and Worker share an isolate, so there is
+no harness process, no port, and no second runtime:
 
 ```
-tests/pure/     imports pure modules (core/, pure services, models) and
-                runs them under the uv-venv interpreter in ~1s. They
-                have no environment dependency, so they exercise the
-                same code Pyodide executes.
-tests/workerd/  boots a real plane (`pywrangler dev` on a throwaway
-                --persist-to D1 with a fresh REALITY_KEY_SECRET) and
-                drives it over HTTP — the same surface agents and admins
-                use. One server per run; unique ids per test; no resets.
-                It writes a stub frontend/dist when the SPA has not been
-                built, so the tier never requires Node.
+tests/pure/     modules with no bindings (core/, pure services, models).
+                They compute objects, so they are ordinary unit tests;
+                they run in the same workerd pool, which is stricter
+                than a Node environment would be.
+tests/workerd/  the real Worker, driven through exports.default.fetch()
+                against a real D1 — the same surface agents and admins
+                use. migrations/*.sql are applied once in setup via
+                readD1Migrations/applyD1Migrations. The plugin shares one
+                D1 across a file's tests, so ids are unique per test
+                (tests/helpers.ts:uid), exactly like the Python harness.
+                The asset tier adds a test-only ASSETS binding and
+                tests/stub-assets, so it never needs a SPA build.
 frontend/       `npm --prefix frontend test` runs vitest over the SPA's
                 pure logic (access-form rules, formatting, the fleet
                 row join) with no DOM; `npm --prefix frontend run build`
@@ -134,10 +136,9 @@ frontend/       `npm --prefix frontend test` runs vitest over the SPA's
 
 The split is the one-runtime rule applied to tests: app code that needs
 bindings, HTTP, or the database cannot run outside workerd, so it is
-tested black-box; code that takes dicts and returns dicts runs anywhere,
-so unit tests keep their 1-second feedback loop. `harness.py` owns the
-plane lifecycle (migrations, boot, health wait, teardown) and the
-`Client`/`uid` helpers every workerd test uses.
+tested black-box; code that takes objects and returns objects stays
+synchronous with a fast feedback loop. `tests/helpers.ts` owns the fetch
+wrapper and the unique-id helper every integration test uses.
 
 ## The render pipeline
 
@@ -149,22 +150,22 @@ For one node, the pipeline is (M2, with the qualifier):
 ```
 nodes.config_json   (authored, opaque, local tags: "reality", "niigata")
       │
-      │  render_service.node_users(conn, node_id)
+      │  render_service.nodeUsers(env.DB, node_id)
       ▼
 projected users     archived user shape: uuids re-keyed from
       │             {"niigata": u} to {"alice@niigata": u},
       │             status passed through, sorted by username
       │
-reality_service.ensure_keys(conn, node_id, config)
+reality_service.ensureKeys(env, node_id, config)
       │             generates and stores a key per missing REALITY tag,
       │             indexed by local inbound tag
       │
-qualify_service.qualify_config / qualify_users / qualify_keys
+qualify_service.qualifyConfig / qualifyUsers / qualifyKeys
       │             local inputs become node-qualified inputs; storage is unchanged
       ▼
       ├──────────────────────────┐
-      │  build_config            │  copied pure core, untouched:
-      │  apply_reality_keys      │  fills clients, appends routing
+      │  buildConfig             │  copied pure core, untouched:
+      │  applyRealityKeys        │  fills clients, appends routing
       │                          │  rules, injects keys
       └──────────────────────────┘
        ▼
@@ -175,10 +176,10 @@ rendered runtime config  →  config_hash (canonical JSON, sha256)
 Three properties matter more than the individual steps:
 
 **The projection is the seam, the pure core never changes.**
-`render_service.user_shape` rebuilds the archived user dict — storage
+`render_service.userShape` rebuilds the archived user dict — storage
 keys uuids by local outbound tag, the allocator wants
-`username@outboundtag` emails — and `build_config`/`apply_reality_keys`
-arrive from the archived panel byte-for-byte except for one import line.
+`username@outboundtag` emails — and `buildConfig`/`applyRealityKeys`
+are the archived panel's pure core, moved without behavior changes.
 M2's qualifier rewrites the projection and the config's tags; if the
 pure core ever needs editing to make multi-node work, the qualifier is
 wrong.
@@ -187,13 +188,14 @@ wrong.
 access rows, and its keys, the output is a deterministic function of the
 inputs — projections are sorted (users by username, nodes by id) so the
 same database state renders byte-identical output, which is what
-`config_hash` (canonical JSON, sorted keys) depends on. `desired_config`
-returns `(None, [])` for a node without a config and `(None, [warning])`
+`config_hash` (canonical JSON, sorted keys) depends on. `desiredConfig`
+returns `[null, []]` for a node without a config and `[null, [warning]]`
 for a malformed one: the render never raises, exactly like the archived
-sync warned and skipped.
+sync warned and skipped. The hash is async because WebCrypto's digest is
+the only SHA-256 in workerd; every caller already awaits the render.
 
-**Key generation has one choke point.** `ensure_keys` runs inside
-`desired_config`, so every path that renders a config — a save, a
+**Key generation has one choke point.** `ensureKeys` runs inside
+`desiredConfig`, so every path that renders a config — a save, a
 rotation, a future agent fetch — guarantees a stored key per REALITY
 inbound before anything is served. That is the archived panel's
 reasoning, now scoped to a node.
@@ -202,7 +204,7 @@ reasoning, now scoped to a node.
 scoped by `(node_id, ...)`: the authored config, the access rows, and the
 keys. Two nodes therefore produce different qualified tags, different
 clients, and different REALITY keys even from identically-shaped authored
-configs. `tests/workerd/test_two_nodes.py` drives two fake agents through
+configs. `tests/workerd/two_nodes.test.ts` drives two fake agents through
 one plane and pins it: A's apply leaves B drifted, a user edit on A
 leaves B's desired hash byte-identical, and a valid token for A is 401 on
 every one of B's endpoints. Adding a node is one `POST /api/admin/nodes`
@@ -214,8 +216,8 @@ node dimension was in the schema from M1.
 `qualify_service` is the pure logic that turns local stored names into
 node-scoped render and link names. Storage still uses local tags; rendered
 emails are qualified because every render now carries a node identity.
-`qualify_config`, `qualify_users`, and `qualify_keys` sit between key
-generation and the unchanged pure render core, while `qualify_profiles`
+`qualifyConfig`, `qualifyUsers`, and `qualifyKeys` sit between key
+generation and the unchanged pure render core, while `qualifyProfiles`
 groups stored profiles under qualified inbounds for link generation.
 
 What it rewrites:
@@ -232,7 +234,7 @@ What it rewrites:
 | uuid map keys | rewrite the part after `@` | `alice@niigata` → `alice@tokyo01-niigata` |
 | reality key map keys | suffix | `{"reality": k}` → `{"reality-tokyo01": k}` |
 
-The sharp edge is the routing rules. `build_config` appends the generated
+The sharp edge is the routing rules. `buildConfig` appends the generated
 rules *after* the admin's own, so any user-authored rule that references a
 tag must be rewritten too, or it will point at a tag that no longer exists.
 That is why the table above includes `outboundTag`, `inboundTag`, and the
@@ -253,13 +255,15 @@ participates in the naming scheme or in generated rules.
 ## The data model
 
 The tables below start from M1 (schema in `migrations/0001_init.sql`) and
-include the M2 addition (`migrations/0002_link_profiles.sql`). The `node`
+include the M2 addition (`migrations/0002_link_profiles.sql`) and the
+post-M5 `reported_address` column (`migrations/0003_reported_address.sql`).
+The `node`
 dimension appears on every table
 that describes something belonging to a specific machine.
 
 | Table | Key | Status | Purpose |
 |---|---|---|---|
-| `nodes` | `id` (`tokyo01`) | M1 | identity, label, public `address`, the authored `config_json`, token hash, applied hash, last-seen, health, versions, last error |
+| `nodes` | `id` (`tokyo01`) | M1 | identity, label, public `address`, the agent-reported `reported_address`, the authored `config_json`, token hash, applied hash, last-seen, health, versions, last error |
 | `user_node_access` | `(username, node_id)` | M1 | node membership plus `allowed_inbounds`, `allowed_outbounds`, and the `uuids` map keyed by local outbound |
 | `reality_keys` | `(node_id, inbound_tag)` | M1 | panel-generated X25519 private keys; one per REALITY inbound, many allowed per node |
 | `users` | `username` | M1 | global identity: status, expiry, note |
@@ -291,12 +295,20 @@ Notes worth keeping in mind:
   node with inbounds but no outbounds simply produces nothing there.
 - **`uuids` is keyed by local outbound** (`{"niigata": "..."}`), scoped by
   the row's node. The allocator looks up `username@tag`, so
-  `render_service.user_shape` builds that lookup key at render time.
+  `render_service.userShape` builds that lookup key at render time.
   Stability is preserved: adding an outbound mints one new uuid and leaves
   the rest alone.
 - **JSON text columns are fine** at this scale, same reasoning as the
   archived panel: optimize when it hurts. No foreign keys — deletes are
-  explicit (`db.delete_user` removes access rows first).
+  explicit (`db.deleteUser` removes access rows first).
+- **The node's address is a domain decision; its report is a fact.**
+  `nodes.address` is optional and admin-set: the host share links point
+  at, blank when the admin has no domain yet (profiles can carry their
+  own client-facing hosts). `nodes.reported_address` (post-M5) is what
+  the node claims about itself at enroll — `detected_ip`, or the
+  edge-observed `CF-Connecting-IP` when the agent sends none — and it is
+  display data for the fleet view only. Links never fall back to it:
+  `funky.example.com` and `203.0.113.7` are different decisions.
 
 ## Trust boundaries
 
@@ -323,12 +335,13 @@ attacker-controlled, which is one more reason the route groups must be
 exhaustive and closed.
 
 **The in-app half of the boundary (since M1).** Cloudflare Access is live,
-but the route-group rule is still enforced in the app: `main.py`
-registers a middleware backed by `route_groups.is_allowed_path`, and any
-request outside the four prefixes gets a bare 404 before routing — even a
-route someone registers at the wrong prefix later. FastAPI's `/docs`,
-`/redoc`, and `/openapi.json` are disabled for the same reason: they sit
-at the root, outside every group, and the guard is fail-closed.
+but the route-group rule is still enforced in the app: `main.ts`
+registers `app.use("*", guard)` backed by `route_groups.isAllowedPath`,
+and any request outside the four prefixes gets a bare 404 before routing
+— even a route someone registers at the wrong prefix later. The same
+reason made FastAPI's `/docs`, `/redoc`, and `/openapi.json` a problem
+(they sat at the root, outside every group); Hono has no such pages, and
+anything a future contributor adds at the root is caught by the guard.
 
 The admin **SPA** is a fifth, non-API surface: static assets served from
 `frontend/dist` at `/admin/*` by Workers' asset layer, which runs *before*
@@ -383,7 +396,7 @@ Two behaviors are load-bearing:
   single-page-application` hands the root index to a browser navigation
   (`Sec-Fetch-Mode: navigate`) whose path matched no asset, but an API-like
   request without those headers still reaches the Worker and fails closed
-  with a 404. `tests/workerd/test_admin_assets.py` pins both halves —
+  with a 404. `tests/workerd/admin_assets.test.ts` pins both halves —
   otherwise "the deep link works" and "unknown paths 404" would quietly
   contradict each other.
 - **The fleet view composes the node-scoped API.** It fetches the node list
@@ -416,9 +429,9 @@ v1:<base64(iv || ciphertext+tag)>
 ```
 
 The scheme prefix and its IV mean the format can rotate later without a
-migration, and every stored value is self-contained. `crypto.py` speaks
-WebCrypto, which only exists inside workerd, so sealing happens through
-`services/key_cipher.py`: inside workerd, `seal` encrypts with the secret
+migration, and every stored value is self-contained. `crypto.ts` wraps
+WebCrypto (workerd's native implementation, no bridge), and sealing
+happens through `services/key_cipher.ts`: `seal` encrypts with the secret
 and `unseal` decrypts. There is no plaintext mode — the app runs only
 under workerd, where the secret always exists, and a missing secret
 raises rather than falling back (a render that ran without the secret
@@ -464,7 +477,9 @@ direct URI remains first.
 The direct view is derived from the inbound's `streamSettings` plus the
 node's `address` — `nodes.address` replaced the archived panel's global
 `SERVER_ADDRESS`, so two nodes produce different URIs for the same user
-and no environment variable is involved. Extra profiles are rows in
+and no environment variable is involved. It is optional and admin-set (a
+domain, normally): the agent-reported IP is display data for the fleet
+view and never becomes a link host. Extra profiles are rows in
 `link_profiles`, per-inbound because they describe a client-side view of
 that inbound — CDN fronting only makes sense for HTTP transports, so
 `xhttp` could have a `cdn` profile and `reality` cannot. Profile writes
@@ -589,8 +604,9 @@ leave everything else in the config untouched.
 - **Why the biggest-possible-config isn't always best.** Every extra link
   profile multiplies the link list; the `1 + extras` rule keeps the direct
   view free and charges only for what is actually added.
-- **Why `db.py` is still one file.** It is the only file containing SQL, so
-  the D1 port changed function bodies and nothing else.
+- **Why `db.ts` is still one file.** It is the only file containing SQL, so
+  the D1 port and then the language port changed function bodies and
+  nothing else.
 - **Why `xray_service` is gone when the code once managed Xray.** It was
   the M1–M2 stopgap: through M2 the control plane was still one process
   ("still one process" in the milestone), so the archived panel's
@@ -599,7 +615,8 @@ leave everything else in the config untouched.
   sync calls without touching the pipeline — `settings.py` went with it.
 - **Why the async/sync split.** Pure computation has no I/O and stays
   synchronous and trivially testable. D1 has no synchronous API, so
-  everything touching it is `async`. That line is the convention.
+  everything touching it is `async`, and `config_hash` is async because
+  workerd's only SHA-256 is WebCrypto's. That line is the convention.
 
 ## Conventions
 

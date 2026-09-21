@@ -11,7 +11,10 @@
 export interface NodeOut {
   id: string;
   label: string;
+  /** The admin-set share-link domain (optional; blank until set). */
   address: string;
+  /** What the node reported about itself at enroll — display only. */
+  reported_address: string | null;
   created_at: number;
   has_config: boolean;
 }

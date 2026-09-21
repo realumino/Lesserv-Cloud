@@ -36,7 +36,8 @@ as it. There is no self-registration and no open enrollment: enrolling
 hands over a rendered config containing every authorized user's UUID for
 that node, so an unknown machine must never be able to ask.
 
-1. The admin creates the node (id, label, public address). The plane mints
+1. The admin creates the node (id, label; an advertised domain is
+   optional and can be set later). The plane mints
    a 32-byte random token, displays it **once**, and stores only its
    SHA-256 hash. The node's state is `pending`.
 2. The admin places the token on the machine — in `agent.toml` (mode
@@ -107,10 +108,13 @@ Request:
 }
 ```
 
-`detected_ip` is the agent's best guess at its own public address. It is a
-**suggestion** for the admin to accept, not a fact the plane adopts
-silently: the node's advertised address is what share links contain, and
-that is an admin decision (`funky.example.com` is not the same as an IP).
+`detected_ip` is the agent's best guess at its own public address. The
+plane records it — falling back to the connection's `CF-Connecting-IP`
+when the field is absent — as the node's **reported address**: display
+data for the admin's fleet view, never a share-link host. The address
+links contain stays an admin decision (a domain such as
+`funky.example.com`, set on the node and editable later), because an IP
+the node reports and a name clients should dial are different facts.
 
 Response: the node's metadata — id, label, advertised address, whether the
 plane considers it `pending` or `active`, and the desired hash if a config

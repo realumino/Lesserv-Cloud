@@ -111,6 +111,26 @@ machine's agent at the deployed plane (deferred, like M4's VPS step). The
 executable plan and its decisions live in
 [`docs/M5-PLAN.md`](docs/M5-PLAN.md).
 
+The TypeScript rewrite replaced the Python plane (FastAPI on Pyodide) with
+TypeScript on workerd — Hono + Zod + `@noble/curves`, the same routes,
+database, and byte-for-byte output. The port was a language change, not a
+redesign: every locked decision in `AGENTS.md` survives, `docs/PROTOCOL.md`
+and `migrations/*.sql` are untouched, and the frontend never noticed. The
+suite is one command (`npm test`: 216 tests executed inside workerd); the
+Python tree, its tests, and its tooling are deleted. Byte parity was gated
+by a hash audit that rendered a seeded D1 with both implementations, in
+both key-generation directions: every parity node's `desired_hash`, render,
+cross-plane token, and share-link body matched, while the two documented
+divergence classes (whole-number floats and oversized integers in stored
+config text) were reproduced as negative controls rather than assumed
+absent. Measured locally, the rewrite cuts the deploy bundle from
+8,731.64 KiB (2,171.40 KiB gzip) to 970.56 KiB (168.91 KiB gzip) and
+dev boot-to-health from 8.5s to 1.5s; deployed CPU-time and cold-start
+numbers do not exist yet because nothing is deployed — the account is
+currently empty and the staging/production deploy is the remaining
+operator step. The executable record, including that deviation, lives in
+[`docs/TS-REWRITE-PLAN.md`](docs/TS-REWRITE-PLAN.md).
+
 | # | Milestone | Status |
 |---|-----------|--------|
 | 0 | Spike: platform viability | done |
@@ -119,6 +139,7 @@ executable plan and its decisions live in
 | 3 | The agent, split out (systemd, pull over localhost) | done |
 | 4 | Control plane on Workers + D1 | done (agent-on-VPS run = operator step) |
 | 5 | Node #2 + the new frontend | done (second-machine run = operator step) |
+| TS | Port the plane from Python to TypeScript on workerd | done (deploy = operator step) |
 | 6 | Subscriptions | not started |
 | 7 | Stats + dashboard | not started |
 | 8 | Quota enforcement | not started |

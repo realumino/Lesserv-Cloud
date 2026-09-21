@@ -1,0 +1,84 @@
+{
+  "quote": [
+    {
+      "name": "punctuation set",
+      "text": "a b!'()*~_-.",
+      "safe": "",
+      "python": "a%20b%21%27%28%29%2A~_-."
+    },
+    {
+      "name": "non-ASCII BMP and astral",
+      "text": "caf\u00e9 \u00b7 \u2192 \ud83d\ude00",
+      "safe": "",
+      "python": "caf%C3%A9%20%C2%B7%20%E2%86%92%20%F0%9F%98%80"
+    },
+    {
+      "name": "share label fragment",
+      "text": "Tokyo 01 \u00b7 XHTTP \u2192 Japan",
+      "safe": "",
+      "python": "Tokyo%2001%20%C2%B7%20XHTTP%20%E2%86%92%20Japan"
+    },
+    {
+      "name": "URI separators",
+      "text": "a/b?c=d&e",
+      "safe": "",
+      "python": "a%2Fb%3Fc%3Dd%26e"
+    },
+    {
+      "name": "percent and space",
+      "text": "100% done",
+      "safe": "",
+      "python": "100%25%20done"
+    },
+    {
+      "name": "always-safe set",
+      "text": "AZaz09_.-~",
+      "safe": "",
+      "python": "AZaz09_.-~"
+    },
+    {
+      "name": "path with safe slash",
+      "text": "path/to?x",
+      "safe": "/",
+      "python": "path/to%3Fx"
+    }
+  ],
+  "urlencode": [
+    {
+      "name": "transport params",
+      "params": {
+        "encryption": "none",
+        "type": "xhttp",
+        "path": "/xhttp-path",
+        "host": "xhttp.example.com",
+        "mode": "auto"
+      },
+      "python": "encryption=none&type=xhttp&path=%2Fxhttp-path&host=xhttp.example.com&mode=auto"
+    },
+    {
+      "name": "non-string values",
+      "params": {
+        "n": 443,
+        "b": true,
+        "f": 1.5,
+        "z": null
+      },
+      "python": "n=443&b=True&f=1.5&z=None"
+    },
+    {
+      "name": "insertion order",
+      "params": {
+        "z": "1",
+        "a": "2",
+        "m": "3"
+      },
+      "python": "z=1&a=2&m=3"
+    }
+  ],
+  "labels": [
+    {
+      "remark": "Tokyo 01 \u00b7 XHTTP \u2192 Japan",
+      "python": "Tokyo%2001%20%C2%B7%20XHTTP%20%E2%86%92%20Japan"
+    }
+  ]
+}

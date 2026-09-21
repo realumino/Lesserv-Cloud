@@ -125,7 +125,7 @@ export const getNode = (nodeId: string) =>
 export const createNode = (body: {
   id: string;
   label: string;
-  address: string;
+  address?: string;
 }) => request<NodeOut>("/nodes", json(body));
 
 export const updateNode = (

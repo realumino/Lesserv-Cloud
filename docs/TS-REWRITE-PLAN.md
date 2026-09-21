@@ -529,6 +529,55 @@ npm --prefix frontend test
 npm --prefix frontend run build
 ```
 
+Finding (TS6): the phase's deploy steps had no target. The Cloudflare
+account that carried the M4/M5 deployment no longer holds the
+`lesserv-cloud` Worker, its D1 database, or the Access applications (the
+account has no Workers and no D1 at all; only the default Zero Trust apps
+remain), so there was no production D1 to audit, nothing to cut over to,
+and no live CPU/cold-start metrics to read. Recorded as a deviation, not a
+silent skip: steps 2 (staging deploy) and 3 (production cutover) remain
+operator-run against infrastructure that has to be recreated, while
+everything that could run locally did.
+
+**Hash audit (the gate).** `scripts/hash_audit.mjs` (temporary, deleted
+with the Python tree) booted both planes against one local D1 — in both
+orders, so each side generated and sealed the REALITY keys in turn — then
+compared every node's `desired_hash`, its rendered runtime config, its
+`/api/node/config` fetch with a token minted by the *other* plane, and each
+link user's `/api/admin/users/{u}/links` body. Dataset: two full configs
+(unicode text and keys, control characters, fractions, exponent floats), a
+node without a config, a malformed one, and two negative controls inserted
+through raw SQL (`100.0` and `1e2` in stored text; `9007199254740993` and
+`18446744073709551615`). Result: all four parity nodes equal in both orders
+across hashes, renders, warnings, cross-plane tokens, and links; both
+negative controls diverged exactly as the documented known limit predicts,
+so the audit detects a divergence rather than assuming one away. The only
+observed divergence classes are whole-number floats and oversized integers
+in stored config text; no production data exists to contain them, so no
+node owes a re-apply. Any future import of pre-port data must rerun this
+audit against that data before cutover.
+
+**Performance record (local dev mode, not production).** `wrangler deploy
+--dry-run` bundle: Python 8,731.64 KiB raw / 2,171.40 KiB gzip (398 modules,
+~8.6 MB vendored) versus TypeScript 970.56 KiB raw / 168.91 KiB gzip —
+9.0x smaller raw, 12.9x smaller gzipped. Boot to first healthy request under
+`wrangler dev` on the same machine: 8.5s (Python) versus 1.5s (TypeScript).
+Request wall time over the same mix (6 syncs, 6 runtime renders, 4 config
+fetches, 3 link lists, medians): Python 25-34 ms, TypeScript 14-21 ms. The
+deployed CPU-time and cold-start numbers the plan wanted require a deployed
+plane and were not measurable; local dev mode is a proxy and D1 dominates
+steady state in production.
+
+**Criterion 7, as measured.** There is no Python tooling left: no `.py`
+files, no `pyproject.toml`/`uv.lock`/`pylock.toml`, no `pywrangler`, no
+`wrangler.reference.jsonc`, and no `uv`-based command in any script or
+runbook. What a grep still finds is deliberate: the historical records
+(`docs/M0-FINDINGS.md` with its banner, the M1-M5 plans, this file) and
+provenance comments in the TS sources and tests that say why a ported
+shape exists ("Ported from tests/pure/test_x25519.py", "matches Pydantic's
+ignore-by-default"). Removing those would delete the reason the code looks
+the way it does.
+
 ## Done criteria
 
 | # | Criterion | Proof |

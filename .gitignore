@@ -1,11 +1,4 @@
-# Python
-__pycache__/
-*.pyc
-.venv/
-
-# pywrangler / wrangler artifacts
-.venv-workers/
-python_modules/
+# wrangler artifacts
 .wrangler/
 .dev.vars
 node_modules/

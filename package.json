@@ -9,6 +9,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tests/tsconfig.json",
     "types": "wrangler types",
+    "predev": "node scripts/stub_frontend_dist.mjs",
     "prebuild": "node scripts/stub_frontend_dist.mjs",
     "build": "wrangler deploy --dry-run",
     "predeploy": "node scripts/stub_frontend_dist.mjs",

@@ -14,8 +14,8 @@
  * it, and clears any stale copy at build start.
  *
  * WHY the dev proxy targets :8787: the app runs only under workerd
- * (`uv run pywrangler dev`), which defaults to 8787; the archived
- * uvicorn port 8000 no longer exists.
+ * (`npm run dev`, wrangler's default port), and the archived single-node
+ * panel's uvicorn port 8000 no longer exists.
  */
 import { copyFileSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";

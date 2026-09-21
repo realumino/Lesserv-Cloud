@@ -5,6 +5,9 @@ per-node access, and REALITY keys; renders each node's runtime Xray config;
 and serves it to the agent on that node, which applies it and reports back
 what it actually ran.
 
+It runs as a TypeScript Worker on workerd (Hono + Zod + `@noble/curves`)
+with D1 as the store — one runtime, no Python bridge.
+
 Nodes are independent — they never talk to each other, and exits are
 external endpoints (WireGuard, Shadowsocks, VLESS) that the panel does not
 manage.
@@ -22,7 +25,11 @@ manage.
 ## Develop
 
 ```powershell
-uv run pywrangler dev            # the plane + local D1 (needs a .dev.vars secret)
+npm install                      # root deps: Worker, tests, tooling
+npm run dev                      # the plane + local D1 (needs a .dev.vars secret)
+npm test                         # the whole suite, executed inside workerd
+npm run typecheck                # tsc --noEmit for src/ and tests/
+npm --prefix frontend install    # first time only
 npm --prefix frontend run dev    # Vite dev server; proxies /api to :8787
 npm --prefix frontend test       # frontend pure-logic tests (vitest)
 npm --prefix frontend run build  # typecheck + build the admin SPA to frontend/dist

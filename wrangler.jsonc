@@ -4,8 +4,7 @@
   "main": "src/worker.ts",
   // M4: deployed control plane, rewritten from Python to TypeScript (TS
   // rewrite, 2026). workerd executes this natively: no Pyodide, no
-  // python_workers flag, no Node builtins. The frozen Python entry lives
-  // in wrangler.reference.jsonc until the port is cut over.
+  // python_workers flag, no Node builtins, no reference Python entrypoint.
   "compatibility_date": "2026-09-17",
   // The admin surface needs a zone (Cloudflare Access), so workers.dev is
   // disabled and the Worker takes the whole hostname as a custom domain.
@@ -15,8 +14,8 @@
     {
       "binding": "DB",
       "database_name": "lesserv",
-      // Placeholder UUID for local development (pywrangler/wrangler dev
-      // ignores it and uses a local database). Replace the name and id
+      // Placeholder UUID for local development (wrangler dev ignores it
+      // and uses a local database). Replace the name and id
       // with your own account's values before deploying — see
       // docs/DEPLOY.md, and keep the real values uncommitted (e.g. in a
       // gitignored wrangler.local.jsonc deployed with --config).
